@@ -30,6 +30,13 @@ import numpy as np
 from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .annotations import (
+    Annotation,
+    AnnotationShape,
+    LabelMeDocument,
+    load_labelme_document,
+)
+
 
 class Canvas(QtWidgets.QGraphicsScene):
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
@@ -66,6 +73,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.show_grid = True
 
         self.selected_pen = QtGui.QPen(QtGui.QBrush(QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern), 1)
+        self.external_annotations: list[Annotation] = []
 
     def add_class(self, class_name):
         if class_name not in self.classes:
@@ -148,29 +156,67 @@ class Canvas(QtWidgets.QGraphicsScene):
                 proceed = False
         return proceed
 
-    def display_external_annotations(self, file_name):
-        file_name = '{}.json'.format(os.path.splitext(file_name)[0])
+    def display_external_annotations(self, file_name: str) -> None:
+        """Render supported LabelMe annotations for an image.
+
+        Native annotations are deliberately kept separate from DDG bird-count
+        points. Point and line annotations are rendered as painter paths so
+        existing ``clear_points`` and ``clear_grid`` behavior does not remove
+        them when the active class or grid display changes.
+
+        Args:
+            file_name: Full path to the source image.
+        """
+        self.external_annotations = []
         try:
-            file = open(file_name, 'r')
-            annotations = json.load(file)
-            file.close()
-            # Hard code for now, really needs to come from UI settings
-            brush = QtGui.QBrush(QtCore.Qt.GlobalColor.magenta, QtCore.Qt.BrushStyle.SolidPattern)
-            pen = QtGui.QPen(brush, 4)
-            if 'shapes' in annotations and 'imageData' in annotations:
-                # Labelme format
-                for shape in annotations['shapes']:
-                    if shape['shape_type'] == 'polygon':
-                        points = []
-                        for point in shape['points']:
-                            points.append(QtCore.QPointF(point[0], point[1]))
-                        # Consider saving in object for redisplay improvement
-                        self.addPolygon(QtGui.QPolygonF(points), pen)
-            else:
-                # Future formats can be added
-                pass
-        except Exception:
-            pass
+            document: LabelMeDocument | None = load_labelme_document(file_name)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return
+
+        if document is None:
+            return
+
+        self.external_annotations = document.annotations
+        annotation_brush: QtGui.QBrush = QtGui.QBrush(
+            QtCore.Qt.GlobalColor.magenta,
+            QtCore.Qt.BrushStyle.SolidPattern,
+        )
+        annotation_pen: QtGui.QPen = QtGui.QPen(annotation_brush, 4)
+
+        annotation: Annotation
+        for annotation in self.external_annotations:
+            item: QtWidgets.QGraphicsItem | None = None
+
+            if annotation.shape_type is AnnotationShape.POINT:
+                x: float
+                y: float
+                x, y = annotation.points[0]
+                path: QtGui.QPainterPath = QtGui.QPainterPath()
+                path.addEllipse(QtCore.QPointF(x, y), 6.0, 6.0)
+                item = self.addPath(path, annotation_pen)
+
+            elif annotation.shape_type is AnnotationShape.LINE:
+                first_x: float
+                first_y: float
+                first_x, first_y = annotation.points[0]
+                path = QtGui.QPainterPath(QtCore.QPointF(first_x, first_y))
+                for x, y in annotation.points[1:]:
+                    path.lineTo(x, y)
+                item = self.addPath(path, annotation_pen)
+
+            elif annotation.shape_type is AnnotationShape.POLYGON:
+                polygon_points: list[QtCore.QPointF] = [
+                    QtCore.QPointF(x, y) for x, y in annotation.points
+                ]
+                item = self.addPolygon(
+                    QtGui.QPolygonF(polygon_points),
+                    annotation_pen,
+                )
+
+            if item is not None:
+                item.setZValue(2.0)
+                if annotation.label:
+                    item.setToolTip(annotation.label)
 
     def display_grid(self):
         self.clear_grid()
@@ -572,6 +618,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.undo_queue = []
         self.coordinates = {}
         self.custom_fields = {'fields': [], 'data': {}}
+        self.external_annotations = []
 
         self.clear()
         self.directory = ''
