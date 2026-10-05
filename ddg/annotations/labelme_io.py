@@ -217,6 +217,45 @@ def _write_labelme_root(json_path: Path, raw_data: dict[str, Any]) -> None:
         file.write("\n")
 
 
+
+def load_labelme_raw_document(image_path: str | Path) -> dict[str, Any] | None:
+    """Load the complete raw LabelMe sidecar for history snapshots.
+
+    Args:
+        image_path: Source image path whose sibling JSON file should be read.
+
+    Returns:
+        Parsed LabelMe root object, or ``None`` when no sidecar exists.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    if not json_path.exists():
+        return None
+    return _load_labelme_root(json_path)
+
+
+def write_labelme_raw_document(
+    image_path: str | Path,
+    raw_data: dict[str, Any] | None,
+) -> Path:
+    """Restore one complete LabelMe document from a history snapshot.
+
+    Args:
+        image_path: Source image associated with the sidecar.
+        raw_data: Complete LabelMe root object. ``None`` removes the sidecar,
+            which is needed when undoing creation of the first annotation.
+
+    Returns:
+        Conventional LabelMe sidecar path.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    if raw_data is None:
+        if json_path.exists():
+            json_path.unlink()
+        return json_path
+
+    _write_labelme_root(json_path, raw_data)
+    return json_path
+
 def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
     """Convert a native annotation to a LabelMe shape dictionary.
 

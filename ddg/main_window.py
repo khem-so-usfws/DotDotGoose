@@ -114,9 +114,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode == "select":
             self.statusBar().showMessage(
                 self.tr(
-                    "Annotation edit: click a shape to select it; drag a vertex "
-                    "handle to move it; Delete removes the selected annotation; "
-                    "Esc exits edit mode."
+                    "Annotation edit: drag a shape to move it; drag a vertex "
+                    "handle to reshape it; right-click a shape/vertex for insert "
+                    "or delete; Ctrl+Z/Ctrl+Y undo/redo; Esc exits edit mode."
                 )
             )
         elif mode == "point":

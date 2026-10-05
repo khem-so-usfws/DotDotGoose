@@ -332,3 +332,24 @@ def test_delete_annotation_removes_only_selected_shape(tmp_path: Path) -> None:
     )
     assert [shape["label"] for shape in shapes] == ["keep_before", "keep_after"]
     assert saved["customMetadata"] == "retain"
+
+
+def test_raw_document_history_round_trip(tmp_path: Path) -> None:
+    """Raw LabelMe snapshots should support restore and sidecar removal."""
+    from ddg.annotations import (
+        load_labelme_raw_document,
+        write_labelme_raw_document,
+    )
+
+    image_path: Path = tmp_path / "IMG_6000.JPG"
+    image_path.write_bytes(b"")
+    raw_data: dict[str, object] = {
+        "customMetadata": {"observer": "example"},
+        "shapes": [],
+    }
+
+    write_labelme_raw_document(image_path, raw_data)
+    assert load_labelme_raw_document(image_path) == raw_data
+
+    write_labelme_raw_document(image_path, None)
+    assert load_labelme_raw_document(image_path) is None

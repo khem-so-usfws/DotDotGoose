@@ -55,6 +55,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     external_annotation_selected = QtCore.pyqtSignal(int)
     external_annotation_vertex_moved = QtCore.pyqtSignal(int, int, QtCore.QPointF)
     external_annotation_vertex_move_finished = QtCore.pyqtSignal(int, int)
+    external_annotation_moved = QtCore.pyqtSignal(int, QtCore.QPointF)
+    external_annotation_move_finished = QtCore.pyqtSignal(int)
+    external_annotation_insert_vertex_requested = QtCore.pyqtSignal(
+        int, QtCore.QPointF
+    )
+    external_annotation_delete_vertex_requested = QtCore.pyqtSignal(int, int)
     external_annotation_delete_requested = QtCore.pyqtSignal()
     external_annotation_selection_cleared = QtCore.pyqtSignal()
 
@@ -72,6 +78,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.polygon_points: list[QtCore.QPointF] = []
         self.polygon_preview_item: QtWidgets.QGraphicsPathItem | None = None
         self.dragging_annotation_vertex: tuple[int, int] | None = None
+        self.dragging_annotation_index: int | None = None
+        self.dragging_annotation_last_point: QtCore.QPointF | None = None
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
@@ -100,6 +108,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.line_points = []
         self.polygon_points = []
         self.dragging_annotation_vertex = None
+        self.dragging_annotation_index = None
+        self.dragging_annotation_last_point = None
         self.interaction_mode = InteractionMode.COUNT
         if was_selection_mode:
             self.external_annotation_selection_cleared.emit()
@@ -118,6 +128,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.line_points = []
         self.polygon_points = []
         self.dragging_annotation_vertex = None
+        self.dragging_annotation_index = None
+        self.dragging_annotation_last_point = None
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
@@ -268,6 +280,19 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             )
             event.accept()
             return
+        if (
+            self.interaction_mode is InteractionMode.SELECT
+            and self.dragging_annotation_index is not None
+            and self.dragging_annotation_last_point is not None
+        ):
+            point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
+            delta: QtCore.QPointF = point - self.dragging_annotation_last_point
+            self.dragging_annotation_last_point = QtCore.QPointF(point)
+            self.external_annotation_moved.emit(
+                self.dragging_annotation_index, delta
+            )
+            event.accept()
+            return
         if self.interaction_mode is InteractionMode.LINE:
             self._update_line_preview(self.mapToScene(event.position().toPoint()))
             event.accept()
@@ -301,7 +326,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                     event.accept()
                     return
                 if item_kind == "ddg_external_annotation":
-                    self.external_annotation_selected.emit(int(item.data(1)))
+                    annotation_index: int = int(item.data(1))
+                    self.external_annotation_selected.emit(annotation_index)
+                    self.dragging_annotation_index = annotation_index
+                    self.dragging_annotation_last_point = self.mapToScene(
+                        event.position().toPoint()
+                    )
                     event.accept()
                     return
 
@@ -350,11 +380,78 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             )
             event.accept()
             return
+        if (
+            self.interaction_mode is InteractionMode.SELECT
+            and self.dragging_annotation_index is not None
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            annotation_index: int = self.dragging_annotation_index
+            self.dragging_annotation_index = None
+            self.dragging_annotation_last_point = None
+            self.external_annotation_move_finished.emit(annotation_index)
+            event.accept()
+            return
         if self.dragMode() == QtWidgets.QGraphicsView.DragMode.RubberBandDrag:
             rect = self.rubberBandRect()
             self.region_selected.emit(self.mapToScene(rect).boundingRect())
             QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+
+    def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
+        """Offer vertex-edit operations while annotation selection is active.
+
+        Args:
+            event: Graphics-view context-menu event.
+        """
+        if self.interaction_mode is not InteractionMode.SELECT:
+            super().contextMenuEvent(event)
+            return
+
+        item: QtWidgets.QGraphicsItem | None = self.itemAt(event.pos())
+        if item is None:
+            return
+
+        item_kind: object = item.data(0)
+        menu: QtWidgets.QMenu = QtWidgets.QMenu(self)
+        if item_kind == "ddg_external_annotation_handle":
+            annotation_index: int = int(item.data(1))
+            vertex_index: int = int(item.data(2))
+            shape_type: str = str(item.data(3) or "")
+            self.external_annotation_selected.emit(annotation_index)
+            if shape_type != AnnotationShape.POINT.value:
+                delete_vertex_action: QtGui.QAction = menu.addAction(
+                    self.tr("Delete Vertex")
+                )
+                chosen_action: QtGui.QAction | None = menu.exec(event.globalPos())
+                if chosen_action is delete_vertex_action:
+                    self.external_annotation_delete_vertex_requested.emit(
+                        annotation_index, vertex_index
+                    )
+            return
+
+        if item_kind != "ddg_external_annotation":
+            return
+
+        annotation_index = int(item.data(1))
+        shape_type = str(item.data(3) or "")
+        self.external_annotation_selected.emit(annotation_index)
+        insert_vertex_action: QtGui.QAction | None = None
+        if shape_type in {
+            AnnotationShape.LINE.value,
+            AnnotationShape.POLYGON.value,
+        }:
+            insert_vertex_action = menu.addAction(self.tr("Insert Vertex Here"))
+        delete_annotation_action: QtGui.QAction = menu.addAction(
+            self.tr("Delete Annotation")
+        )
+        chosen_action = menu.exec(event.globalPos())
+        if insert_vertex_action is not None and chosen_action is insert_vertex_action:
+            scene_point: QtCore.QPointF = self.mapToScene(event.pos())
+            self.external_annotation_insert_vertex_requested.emit(
+                annotation_index, scene_point
+            )
+        elif chosen_action is delete_annotation_action:
+            self.external_annotation_delete_requested.emit()
 
 
     def _add_line_vertex(self, point: QtCore.QPointF) -> None:

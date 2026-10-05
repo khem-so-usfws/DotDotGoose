@@ -7,7 +7,9 @@ from .labelme_io import (
     delete_labelme_annotation,
     labelme_path_for_image,
     load_labelme_document,
+    load_labelme_raw_document,
     update_labelme_annotation,
+    write_labelme_raw_document,
 )
 from .model import Annotation, AnnotationShape, Point
 from .style import (
@@ -30,6 +32,8 @@ __all__: list[str] = [
     "labelme_path_for_image",
     "load_annotation_style",
     "load_labelme_document",
+    "load_labelme_raw_document",
     "update_labelme_annotation",
+    "write_labelme_raw_document",
     "save_annotation_style",
 ]

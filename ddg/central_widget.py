@@ -109,6 +109,18 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.graphicsView.external_annotation_vertex_move_finished.connect(
             self.canvas.finish_external_annotation_vertex_move
         )
+        self.graphicsView.external_annotation_moved.connect(
+            self.canvas.move_external_annotation
+        )
+        self.graphicsView.external_annotation_move_finished.connect(
+            self.canvas.finish_external_annotation_move
+        )
+        self.graphicsView.external_annotation_insert_vertex_requested.connect(
+            self.canvas.insert_external_annotation_vertex
+        )
+        self.graphicsView.external_annotation_delete_vertex_requested.connect(
+            self.delete_annotation_vertex
+        )
         self.graphicsView.external_annotation_delete_requested.connect(
             self.delete_selected_annotation
         )
@@ -177,13 +189,37 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         response: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
             self,
             self.tr("Delete Annotation"),
-            self.tr("Delete the selected annotation? This cannot yet be undone."),
+            self.tr("Delete the selected annotation? You can undo this with Ctrl+Z."),
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
         )
         if response == QtWidgets.QMessageBox.StandardButton.Yes:
             self.canvas.delete_selected_external_annotation()
+
+    def delete_annotation_vertex(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+    ) -> None:
+        """Delete one selected annotation vertex when geometry remains valid.
+
+        Args:
+            annotation_index: Index in the active image annotation list.
+            vertex_index: Vertex to remove from the selected annotation.
+        """
+        deleted: bool = self.canvas.delete_external_annotation_vertex(
+            annotation_index, vertex_index
+        )
+        if not deleted:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("Vertex Not Deleted"),
+                self.tr(
+                    "The vertex cannot be removed because the annotation must "
+                    "retain the minimum number of vertices."
+                ),
+            )
 
     def start_landmark_point(self) -> bool:
         """Start drawing a native landmark point on the active image.

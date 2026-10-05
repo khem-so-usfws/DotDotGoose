@@ -25,6 +25,9 @@
 import os
 import json
 import glob
+from copy import deepcopy
+from typing import Any
+
 import numpy as np
 
 from PIL import Image
@@ -38,7 +41,9 @@ from .annotations import (
     delete_labelme_annotation,
     load_annotation_style,
     load_labelme_document,
+    load_labelme_raw_document,
     update_labelme_annotation,
+    write_labelme_raw_document,
 )
 
 
@@ -224,6 +229,9 @@ class Canvas(QtWidgets.QGraphicsScene):
             image_height = int(image_data.shape[0])
             image_width = int(image_data.shape[1])
 
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
         try:
             append_labelme_annotation(
                 image_path=image_path,
@@ -238,6 +246,17 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.tr("The annotation could not be saved.\n\n{}").format(error),
             )
             return
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=None,
+            after_selection_source_index=annotation.source_shape_index,
+        )
 
         self.external_annotations.append(annotation)
         self._render_external_annotation(
@@ -323,6 +342,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             item.setZValue(2.0)
             item.setData(0, "ddg_external_annotation")
             item.setData(1, annotation_index)
+            item.setData(3, annotation.shape_type.value)
             if annotation.label:
                 item.setToolTip(annotation.label)
             self.external_annotation_items.append(item)
@@ -363,6 +383,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             handle.setData(0, "ddg_external_annotation_handle")
             handle.setData(1, annotation_index)
             handle.setData(2, vertex_index)
+            handle.setData(3, annotation.shape_type.value)
             self.external_annotation_handle_items.append(handle)
 
     def _clear_external_annotation_handles(self) -> None:
@@ -436,6 +457,36 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.selected_external_annotation_index = annotation_index
         self._rerender_external_annotations()
 
+    def move_external_annotation(
+        self,
+        annotation_index: int,
+        delta: QtCore.QPointF,
+    ) -> None:
+        """Translate one selected annotation in memory by a scene delta.
+
+        Geometry is persisted when the drag finishes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            delta: Source-image x/y translation since the previous mouse event.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+        annotation: Annotation = self.external_annotations[annotation_index]
+        annotation.points = [
+            (x + delta.x(), y + delta.y()) for x, y in annotation.points
+        ]
+        self.selected_external_annotation_index = annotation_index
+        self._rerender_external_annotations()
+
+    def finish_external_annotation_move(self, annotation_index: int) -> None:
+        """Persist a whole-annotation translation after dragging completes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+        """
+        self._persist_external_annotation_edit(annotation_index)
+
     def finish_external_annotation_vertex_move(
         self,
         annotation_index: int,
@@ -449,17 +500,98 @@ class Canvas(QtWidgets.QGraphicsScene):
                 API for future undo/redo support.
         """
         del vertex_index
-        if self.current_image_name is None:
-            return
+        self._persist_external_annotation_edit(annotation_index)
+
+    def insert_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        point: QtCore.QPointF,
+    ) -> bool:
+        """Insert a vertex on the nearest segment of a line or polygon.
+
+        The inserted coordinate is projected onto the nearest segment so the
+        shape does not jump toward an imprecise context-menu click.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            point: Source-image coordinate near the desired edge.
+
+        Returns:
+            ``True`` when a vertex was inserted and saved.
+        """
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
-            return
+            return False
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.shape_type is AnnotationShape.POINT:
+            return False
+
+        nearest: tuple[int, tuple[float, float]] | None = self._nearest_segment_point(
+            annotation, point
+        )
+        if nearest is None:
+            return False
+        segment_index, projected_point = nearest
+        insert_index: int = segment_index + 1
+        annotation.points.insert(insert_index, projected_point)
+        self.selected_external_annotation_index = annotation_index
+        return self._persist_external_annotation_edit(annotation_index)
+
+    def delete_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+    ) -> bool:
+        """Delete one line/polygon vertex when valid geometry will remain.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex to remove.
+
+        Returns:
+            ``True`` when the vertex was removed and saved.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if vertex_index < 0 or vertex_index >= len(annotation.points):
+            return False
+        minimum_vertices: int
+        if annotation.shape_type is AnnotationShape.LINE:
+            minimum_vertices = 2
+        elif annotation.shape_type is AnnotationShape.POLYGON:
+            minimum_vertices = 3
+        else:
+            return False
+        if len(annotation.points) <= minimum_vertices:
+            return False
+
+        annotation.points.pop(vertex_index)
+        self.selected_external_annotation_index = annotation_index
+        return self._persist_external_annotation_edit(annotation_index)
+
+    def _persist_external_annotation_edit(self, annotation_index: int) -> bool:
+        """Persist one in-memory annotation geometry edit with undo history.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+
+        Returns:
+            ``True`` when the edit was saved successfully.
+        """
+        if self.current_image_name is None:
+            return False
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
 
         annotation: Annotation = self.external_annotations[annotation_index]
         source_shape_index: int | None = annotation.source_shape_index
         if source_shape_index is None:
-            return
+            return False
 
         image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
         try:
             update_labelme_annotation(image_path, annotation)
         except (
@@ -473,10 +605,86 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.tr("Annotation Save Failed"),
                 self.tr("The annotation edit could not be saved.\n\n{}").format(error),
             )
+            self._reload_external_annotations_preserving_selection(
+                image_path, source_shape_index
+            )
+            return False
 
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=source_shape_index,
+        )
         self._reload_external_annotations_preserving_selection(
             image_path, source_shape_index
         )
+        return True
+
+    def _nearest_segment_point(
+        self,
+        annotation: Annotation,
+        point: QtCore.QPointF,
+    ) -> tuple[int, tuple[float, float]] | None:
+        """Find the nearest line/polygon segment and projected coordinate.
+
+        Args:
+            annotation: Line or polygon annotation.
+            point: Source-image coordinate supplied by the user.
+
+        Returns:
+            ``(segment_index, projected_point)`` or ``None`` when the shape has
+            no editable segments.
+        """
+        point_count: int = len(annotation.points)
+        if point_count < 2:
+            return None
+
+        segment_count: int = point_count
+        if annotation.shape_type is AnnotationShape.LINE:
+            segment_count = point_count - 1
+
+        best_segment: int | None = None
+        best_point: tuple[float, float] | None = None
+        best_distance_squared: float | None = None
+        target_x: float = point.x()
+        target_y: float = point.y()
+
+        for segment_index in range(segment_count):
+            start_x, start_y = annotation.points[segment_index]
+            end_x, end_y = annotation.points[(segment_index + 1) % point_count]
+            dx: float = end_x - start_x
+            dy: float = end_y - start_y
+            length_squared: float = (dx * dx) + (dy * dy)
+            if length_squared == 0.0:
+                projected_x = start_x
+                projected_y = start_y
+            else:
+                fraction: float = (
+                    ((target_x - start_x) * dx) + ((target_y - start_y) * dy)
+                ) / length_squared
+                fraction = max(0.0, min(1.0, fraction))
+                projected_x = start_x + (fraction * dx)
+                projected_y = start_y + (fraction * dy)
+
+            distance_squared: float = (
+                ((target_x - projected_x) ** 2) + ((target_y - projected_y) ** 2)
+            )
+            if (
+                best_distance_squared is None
+                or distance_squared < best_distance_squared
+            ):
+                best_distance_squared = distance_squared
+                best_segment = segment_index
+                best_point = (projected_x, projected_y)
+
+        if best_segment is None or best_point is None:
+            return None
+        return best_segment, best_point
 
     def delete_selected_external_annotation(self) -> bool:
         """Delete the currently selected native annotation from its sidecar.
@@ -498,6 +706,9 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
         try:
             delete_labelme_annotation(image_path, source_shape_index)
         except (
@@ -513,8 +724,98 @@ class Canvas(QtWidgets.QGraphicsScene):
             )
             return False
 
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=None,
+        )
         self.display_external_annotations(image_path)
         return True
+
+    def _annotation_history_snapshot(
+        self,
+        image_path: str,
+    ) -> dict[str, Any] | None:
+        """Return a detached LabelMe document for annotation undo/redo.
+
+        Args:
+            image_path: Source image whose annotation sidecar should be read.
+
+        Returns:
+            Deep-copied LabelMe root object, or ``None`` when no sidecar exists.
+        """
+        try:
+            raw_data: dict[str, Any] | None = load_labelme_raw_document(image_path)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+        return deepcopy(raw_data) if raw_data is not None else None
+
+    def _record_annotation_history(
+        self,
+        image_path: str,
+        before_snapshot: dict[str, Any] | None,
+        after_snapshot: dict[str, Any] | None,
+        before_selection_source_index: int | None,
+        after_selection_source_index: int | None,
+    ) -> None:
+        """Append one complete annotation-document change to DDG history.
+
+        Args:
+            image_path: Source image associated with the sidecar.
+            before_snapshot: LabelMe document before the operation.
+            after_snapshot: LabelMe document after the operation.
+            before_selection_source_index: Shape index to select when undoing.
+            after_selection_source_index: Shape index to select when redoing.
+        """
+        if before_snapshot == after_snapshot:
+            return
+        event: tuple[object, ...] = (
+            "annotation_json",
+            image_path,
+            deepcopy(before_snapshot),
+            deepcopy(after_snapshot),
+            before_selection_source_index,
+            after_selection_source_index,
+        )
+        self.undo_queue.append(event)
+        self.redo_queue = []
+
+    def _apply_annotation_history_snapshot(
+        self,
+        image_path: str,
+        snapshot: dict[str, Any] | None,
+        selection_source_index: int | None,
+    ) -> None:
+        """Restore a LabelMe sidecar snapshot and refresh the active image.
+
+        Args:
+            image_path: Source image associated with the sidecar.
+            snapshot: Raw LabelMe document to restore, or ``None`` to remove it.
+            selection_source_index: Shape source index to reselect after restore.
+        """
+        write_labelme_raw_document(image_path, deepcopy(snapshot))
+        current_path: str | None = None
+        if self.current_image_name is not None:
+            current_path = os.path.normcase(
+                os.path.abspath(os.path.join(self.directory, self.current_image_name))
+            )
+        restored_path: str = os.path.normcase(os.path.abspath(image_path))
+        if current_path != restored_path:
+            return
+
+        self.display_external_annotations(image_path)
+        if selection_source_index is None:
+            return
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            if annotation.source_shape_index == selection_source_index:
+                self.selected_external_annotation_index = annotation_index
+                self._rerender_external_annotations()
+                return
 
     def _reload_external_annotations_preserving_selection(
         self,
@@ -901,6 +1202,11 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.update_point_count.emit(self.current_image_name, event[1], len(self.points[self.current_image_name][event[1]]))
                 self.display_points()
                 self.undo_queue.append(event)
+            elif event[0] == 'annotation_json':
+                self._apply_annotation_history_snapshot(
+                    event[1], event[3], event[5]
+                )
+                self.undo_queue.append(event)
 
     def redraw_image(self):
         if self.directory != '':
@@ -1091,6 +1397,11 @@ class Canvas(QtWidgets.QGraphicsScene):
                     self.points[self.current_image_name][class_name].append(point)
                     self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
                 self.display_points()
+                self.redo_queue.append(event)
+            elif event[0] == 'annotation_json':
+                self._apply_annotation_history_snapshot(
+                    event[1], event[2], event[4]
+                )
                 self.redo_queue.append(event)
 
     def update_survey_id(self, text):
