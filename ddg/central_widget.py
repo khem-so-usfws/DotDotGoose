@@ -95,7 +95,26 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.graphicsView.toggle_grid.connect(self.point_widget.checkBoxDisplayGrid.toggle)
         self.graphicsView.switch_class.connect(self.point_widget.set_active_class)
         self.graphicsView.add_point.connect(self.canvas.add_point)
+        self.graphicsView.annotation_point_completed.connect(
+            self.canvas.add_landmark_annotation
+        )
+        self.graphicsView.line_completed.connect(self.canvas.add_line_annotation)
         self.graphicsView.polygon_completed.connect(self.canvas.add_polygon_annotation)
+        self.graphicsView.external_annotation_selected.connect(
+            self.canvas.select_external_annotation
+        )
+        self.graphicsView.external_annotation_vertex_moved.connect(
+            self.canvas.move_external_annotation_vertex
+        )
+        self.graphicsView.external_annotation_vertex_move_finished.connect(
+            self.canvas.finish_external_annotation_vertex_move
+        )
+        self.graphicsView.external_annotation_delete_requested.connect(
+            self.delete_selected_annotation
+        )
+        self.graphicsView.external_annotation_selection_cleared.connect(
+            self.canvas.clear_external_annotation_selection
+        )
         self.canvas.image_loaded.connect(self.graphicsView.image_loaded)
         self.canvas.image_loaded.connect(self.graphicsView.reset_annotation_state)
         self.canvas.directory_set.connect(self.display_working_directory)
@@ -134,6 +153,69 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     def cancel_annotation(self) -> None:
         """Cancel the in-progress native annotation, if any."""
         self.graphicsView.cancel_annotation()
+
+    def start_annotation_selection(self) -> bool:
+        """Start native annotation selection/edit mode.
+
+        Returns:
+            ``True`` when selection mode was started, otherwise ``False``.
+        """
+        if not self.canvas.current_image_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("No Image Loaded"),
+                self.tr("Load an image before editing annotations."),
+            )
+            return False
+        self.graphicsView.start_annotation_selection()
+        return True
+
+    def delete_selected_annotation(self) -> None:
+        """Confirm and delete the currently selected native annotation."""
+        if self.canvas.selected_external_annotation_index is None:
+            return
+        response: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("Delete Annotation"),
+            self.tr("Delete the selected annotation? This cannot yet be undone."),
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if response == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.canvas.delete_selected_external_annotation()
+
+    def start_landmark_point(self) -> bool:
+        """Start drawing a native landmark point on the active image.
+
+        Returns:
+            ``True`` when landmark mode was started, otherwise ``False``.
+        """
+        if not self.canvas.current_image_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("No Image Loaded"),
+                self.tr("Load an image before drawing a landmark."),
+            )
+            return False
+        self.graphicsView.start_landmark_annotation()
+        return True
+
+    def start_cutline(self) -> bool:
+        """Start drawing a native cutline on the active image.
+
+        Returns:
+            ``True`` when cutline mode was started, otherwise ``False``.
+        """
+        if not self.canvas.current_image_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("No Image Loaded"),
+                self.tr("Load an image before drawing a cutline."),
+            )
+            return False
+        self.graphicsView.start_line_annotation()
+        return True
 
     def start_count_region_polygon(self) -> bool:
         """Start drawing a count-region polygon on the active image.

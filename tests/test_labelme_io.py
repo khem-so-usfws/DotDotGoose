@@ -191,3 +191,144 @@ def test_append_annotation_preserves_existing_labelme_content(tmp_path: Path) ->
     assert shapes[0]["shape_type"] == "rectangle"
     assert shapes[1]["label"] == "count_region"
     assert shapes[1]["shape_type"] == "polygon"
+
+
+def test_append_line_and_point_annotations(tmp_path) -> None:
+    """Line and point annotations should serialize with LabelMe shape types."""
+    image_path = tmp_path / "IMG_2000.JPG"
+    image_path.write_bytes(b"")
+
+    line = Annotation(
+        label="cutline",
+        shape_type=AnnotationShape.LINE,
+        points=[(1.0, 2.0), (3.0, 4.0)],
+    )
+    point = Annotation(
+        label="landmark",
+        shape_type=AnnotationShape.POINT,
+        points=[(5.0, 6.0)],
+    )
+    append_labelme_annotation(image_path, line)
+    append_labelme_annotation(image_path, point)
+
+    document = load_labelme_document(image_path)
+    assert document is not None
+    assert [annotation.shape_type for annotation in document.annotations] == [
+        AnnotationShape.LINE,
+        AnnotationShape.POINT,
+    ]
+    assert [annotation.label for annotation in document.annotations] == [
+        "cutline",
+        "landmark",
+    ]
+
+
+def test_loaded_annotations_track_original_shape_indexes(tmp_path: Path) -> None:
+    """Supported annotations should retain their original LabelMe shape indexes."""
+    image_path: Path = tmp_path / "IMG_3000.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    raw_data: dict[str, object] = {
+        "shapes": [
+            {
+                "label": "unsupported",
+                "points": [[0, 0], [10, 10]],
+                "shape_type": "rectangle",
+            },
+            {
+                "label": "landmark",
+                "points": [[25, 30]],
+                "shape_type": "point",
+            },
+            {
+                "label": "cutline",
+                "points": [[1, 2], [3, 4]],
+                "shape_type": "line",
+            },
+        ]
+    }
+    json_path.write_text(json.dumps(raw_data), encoding="utf-8")
+
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+
+    assert document is not None
+    assert [annotation.source_shape_index for annotation in document.annotations] == [
+        1,
+        2,
+    ]
+
+
+def test_update_annotation_preserves_unmanaged_shape_fields(tmp_path: Path) -> None:
+    """Editing geometry should retain unrelated LabelMe shape fields."""
+    from ddg.annotations import update_labelme_annotation
+
+    image_path: Path = tmp_path / "IMG_3001.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    raw_data: dict[str, object] = {
+        "flags": {"reviewed": True},
+        "shapes": [
+            {
+                "label": "cutline",
+                "points": [[1, 2], [3, 4]],
+                "shape_type": "linestrip",
+                "group_id": None,
+                "flags": {},
+                "description": "retain this",
+                "customShapeField": 42,
+            }
+        ],
+    }
+    json_path.write_text(json.dumps(raw_data), encoding="utf-8")
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+    assert document is not None
+    annotation: Annotation = document.annotations[0]
+    annotation.points[1] = (30.0, 40.0)
+
+    update_labelme_annotation(image_path, annotation)
+
+    saved: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
+    assert shapes[0]["points"] == [[1.0, 2.0], [30.0, 40.0]]
+    assert shapes[0]["shape_type"] == "linestrip"
+    assert shapes[0]["description"] == "retain this"
+    assert shapes[0]["customShapeField"] == 42
+    assert saved["flags"] == {"reviewed": True}
+
+
+def test_delete_annotation_removes_only_selected_shape(tmp_path: Path) -> None:
+    """Deleting one annotation should leave all other LabelMe shapes intact."""
+    from ddg.annotations import delete_labelme_annotation
+
+    image_path: Path = tmp_path / "IMG_3002.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    raw_data: dict[str, object] = {
+        "customMetadata": "retain",
+        "shapes": [
+            {
+                "label": "keep_before",
+                "points": [[0, 0], [5, 5]],
+                "shape_type": "rectangle",
+            },
+            {
+                "label": "delete_me",
+                "points": [[10, 10]],
+                "shape_type": "point",
+            },
+            {
+                "label": "keep_after",
+                "points": [[20, 20], [30, 30]],
+                "shape_type": "line",
+            },
+        ],
+    }
+    json_path.write_text(json.dumps(raw_data), encoding="utf-8")
+
+    delete_labelme_annotation(image_path, 1)
+
+    saved: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
+    assert [shape["label"] for shape in shapes] == ["keep_before", "keep_after"]
+    assert saved["customMetadata"] == "retain"

@@ -26,6 +26,7 @@ from ddg import CentralWidget
 from PyQt6 import QtWidgets, QtCore, QtGui
 from ddg import AboutDialog
 from ddg import __version__
+from ddg.annotation_symbology_dialog import AnnotationSymbologyDialog
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -49,11 +50,38 @@ class MainWindow(QtWidgets.QMainWindow):
 
         annotation_menu = self.menuBar().addMenu(self.tr("Annotations"))
         annotation_menu.setObjectName("Annotations")
+        select_annotation_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Select/Edit Annotation")
+        )
+        select_annotation_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
+        select_annotation_action.triggered.connect(self.start_annotation_selection)
+
+        annotation_menu.addSeparator()
+        draw_landmark_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Draw Landmark Point")
+        )
+        draw_landmark_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+M"))
+        draw_landmark_action.triggered.connect(self.start_landmark_point)
+
+        draw_line_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Draw Cutline")
+        )
+        draw_line_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+L"))
+        draw_line_action.triggered.connect(self.start_cutline)
+
         draw_polygon_action: QtGui.QAction = annotation_menu.addAction(
             self.tr("Draw Count Region Polygon")
         )
         draw_polygon_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+P"))
         draw_polygon_action.triggered.connect(self.start_count_region_polygon)
+
+        annotation_menu.addSeparator()
+        symbology_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Symbology...")
+        )
+        symbology_action.triggered.connect(self.configure_annotation_symbology)
+
+        annotation_menu.addSeparator()
         cancel_annotation_action: QtGui.QAction = annotation_menu.addAction(
             self.tr("Cancel Annotation")
         )
@@ -83,7 +111,26 @@ class MainWindow(QtWidgets.QMainWindow):
         Args:
             mode: Current graphics-view interaction mode.
         """
-        if mode == "polygon":
+        if mode == "select":
+            self.statusBar().showMessage(
+                self.tr(
+                    "Annotation edit: click a shape to select it; drag a vertex "
+                    "handle to move it; Delete removes the selected annotation; "
+                    "Esc exits edit mode."
+                )
+            )
+        elif mode == "point":
+            self.statusBar().showMessage(
+                self.tr("Landmark point: click once to place; Esc to cancel.")
+            )
+        elif mode == "line":
+            self.statusBar().showMessage(
+                self.tr(
+                    "Cutline: click vertices; Enter or double-click to finish; "
+                    "Esc to cancel."
+                )
+            )
+        elif mode == "polygon":
             self.statusBar().showMessage(
                 self.tr(
                     "Count-region polygon: click vertices; Enter or double-click "
@@ -92,6 +139,25 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         else:
             self.statusBar().clearMessage()
+
+
+    def configure_annotation_symbology(self) -> None:
+        """Open annotation symbology settings and refresh visible annotations."""
+        dialog: AnnotationSymbologyDialog = AnnotationSymbologyDialog(self)
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.centralWidget().canvas.refresh_external_annotation_styles()
+
+    def start_annotation_selection(self) -> None:
+        """Start native annotation selection/edit mode."""
+        self.centralWidget().start_annotation_selection()
+
+    def start_landmark_point(self) -> None:
+        """Start native landmark point drawing."""
+        self.centralWidget().start_landmark_point()
+
+    def start_cutline(self) -> None:
+        """Start native cutline drawing."""
+        self.centralWidget().start_cutline()
 
     def start_count_region_polygon(self) -> None:
         """Start native count-region polygon drawing."""

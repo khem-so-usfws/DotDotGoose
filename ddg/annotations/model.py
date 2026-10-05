@@ -31,6 +31,8 @@ class Annotation:
             the normalized native geometry type (for example ``linestrip``).
         annotation_id: Optional stable identifier for future DDG-native
             relationships such as linked landmarks.
+        source_shape_index: Zero-based index of the corresponding shape in the
+            LabelMe ``shapes`` list, when loaded or saved from a sidecar.
     """
 
     label: str
@@ -40,6 +42,7 @@ class Annotation:
     flags: dict[str, Any] = field(default_factory=dict)
     source_shape_type: str | None = None
     annotation_id: str | None = None
+    source_shape_index: int | None = None
 
     def __post_init__(self) -> None:
         """Validate geometry immediately after construction."""

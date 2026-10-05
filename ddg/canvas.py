@@ -35,7 +35,10 @@ from .annotations import (
     AnnotationShape,
     LabelMeDocument,
     append_labelme_annotation,
+    delete_labelme_annotation,
+    load_annotation_style,
     load_labelme_document,
+    update_labelme_annotation,
 )
 
 
@@ -76,6 +79,9 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.selected_pen = QtGui.QPen(QtGui.QBrush(QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern), 1)
         self.external_annotations: list[Annotation] = []
         self.external_annotation_document: LabelMeDocument | None = None
+        self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
+        self.external_annotation_handle_items: list[QtWidgets.QGraphicsItem] = []
+        self.selected_external_annotation_index: int | None = None
 
     def add_class(self, class_name):
         if class_name not in self.classes:
@@ -158,21 +164,59 @@ class Canvas(QtWidgets.QGraphicsScene):
                 proceed = False
         return proceed
 
+    def add_landmark_annotation(self, point: QtCore.QPointF) -> None:
+        """Create and immediately save a landmark point annotation.
+
+        Args:
+            point: Landmark coordinate in source-image pixel coordinates.
+        """
+        annotation: Annotation = Annotation(
+            label="landmark",
+            shape_type=AnnotationShape.POINT,
+            points=[(point.x(), point.y())],
+        )
+        self._save_native_annotation(annotation)
+
+    def add_line_annotation(self, points: list[QtCore.QPointF]) -> None:
+        """Create and immediately save a cutline annotation.
+
+        Args:
+            points: Ordered cutline vertices in source-image pixel coordinates.
+        """
+        if len(points) < 2:
+            return
+        annotation: Annotation = Annotation(
+            label="cutline",
+            shape_type=AnnotationShape.LINE,
+            points=[(point.x(), point.y()) for point in points],
+        )
+        self._save_native_annotation(annotation)
+
     def add_polygon_annotation(self, points: list[QtCore.QPointF]) -> None:
         """Create and immediately save a count-region polygon.
 
         Args:
-            points: Polygon vertices in scene/source-image pixel coordinates.
+            points: Polygon vertices in source-image pixel coordinates.
         """
-        if self.current_image_name is None or len(points) < 3:
+        if len(points) < 3:
             return
-
-        image_path: str = os.path.join(self.directory, self.current_image_name)
         annotation: Annotation = Annotation(
             label="count_region",
             shape_type=AnnotationShape.POLYGON,
             points=[(point.x(), point.y()) for point in points],
         )
+        self._save_native_annotation(annotation)
+
+    def _save_native_annotation(self, annotation: Annotation) -> None:
+        """Append one native annotation to the active image sidecar.
+
+        Args:
+            annotation: Valid native annotation to save and render.
+        """
+        if self.current_image_name is None:
+            return
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
         image_height: int | None = None
         image_width: int | None = None
         image_data: np.ndarray | None = self.image_cache.get("data")
@@ -191,14 +235,14 @@ class Canvas(QtWidgets.QGraphicsScene):
             QtWidgets.QMessageBox.critical(
                 self.parent(),
                 self.tr("Annotation Save Failed"),
-                self.tr(
-                    "The count-region polygon could not be saved.\n\n{}"
-                ).format(error),
+                self.tr("The annotation could not be saved.\n\n{}").format(error),
             )
             return
 
         self.external_annotations.append(annotation)
-        self._render_external_annotation(annotation)
+        self._render_external_annotation(
+            annotation, len(self.external_annotations) - 1
+        )
 
     def display_external_annotations(self, file_name: str) -> None:
         """Render supported LabelMe annotations for an image.
@@ -211,8 +255,10 @@ class Canvas(QtWidgets.QGraphicsScene):
         Args:
             file_name: Full path to the source image.
         """
+        self._clear_external_annotation_graphics()
         self.external_annotations = []
         self.external_annotation_document = None
+        self.selected_external_annotation_index = None
         try:
             document: LabelMeDocument | None = load_labelme_document(file_name)
         except (OSError, json.JSONDecodeError, ValueError):
@@ -223,23 +269,30 @@ class Canvas(QtWidgets.QGraphicsScene):
 
         self.external_annotation_document = document
         self.external_annotations = document.annotations
+        annotation_index: int
         annotation: Annotation
-        for annotation in self.external_annotations:
-            self._render_external_annotation(annotation)
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            self._render_external_annotation(annotation, annotation_index)
 
-    def _render_external_annotation(self, annotation: Annotation) -> None:
+    def _render_external_annotation(
+        self,
+        annotation: Annotation,
+        annotation_index: int,
+    ) -> None:
         """Render one native annotation on the current graphics scene.
 
         Args:
             annotation: Annotation to render.
+            annotation_index: Index in ``external_annotations``.
         """
-        annotation_brush: QtGui.QBrush = QtGui.QBrush(
-            QtCore.Qt.GlobalColor.magenta,
-            QtCore.Qt.BrushStyle.SolidPattern,
-        )
-        annotation_pen: QtGui.QPen = QtGui.QPen(annotation_brush, 4)
-        item: QtWidgets.QGraphicsItem | None = None
+        style = load_annotation_style(annotation.shape_type)
+        annotation_color: QtGui.QColor = QtGui.QColor(style.color)
+        annotation_pen: QtGui.QPen = QtGui.QPen(annotation_color, style.width)
+        if annotation_index == self.selected_external_annotation_index:
+            annotation_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            annotation_pen.setWidthF(max(style.width + 1.5, 2.0))
 
+        item: QtWidgets.QGraphicsItem | None = None
         if annotation.shape_type is AnnotationShape.POINT:
             x: float
             y: float
@@ -268,8 +321,234 @@ class Canvas(QtWidgets.QGraphicsScene):
 
         if item is not None:
             item.setZValue(2.0)
+            item.setData(0, "ddg_external_annotation")
+            item.setData(1, annotation_index)
             if annotation.label:
                 item.setToolTip(annotation.label)
+            self.external_annotation_items.append(item)
+
+    def _render_external_annotation_handles(self) -> None:
+        """Render fixed-screen-size vertex handles for the selected annotation."""
+        self._clear_external_annotation_handles()
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        style = load_annotation_style(annotation.shape_type)
+        color: QtGui.QColor = QtGui.QColor(style.color)
+        pen: QtGui.QPen = QtGui.QPen(color, 2.0)
+        brush: QtGui.QBrush = QtGui.QBrush(
+            QtGui.QColor(255, 255, 255, 220),
+            QtCore.Qt.BrushStyle.SolidPattern,
+        )
+
+        vertex_index: int
+        x: float
+        y: float
+        for vertex_index, (x, y) in enumerate(annotation.points):
+            handle_path: QtGui.QPainterPath = QtGui.QPainterPath()
+            handle_path.addEllipse(QtCore.QPointF(0.0, 0.0), 5.0, 5.0)
+            handle: QtWidgets.QGraphicsPathItem = self.addPath(
+                handle_path, pen, brush
+            )
+            handle.setPos(x, y)
+            handle.setFlag(
+                QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+                True,
+            )
+            handle.setZValue(20.0)
+            handle.setData(0, "ddg_external_annotation_handle")
+            handle.setData(1, annotation_index)
+            handle.setData(2, vertex_index)
+            self.external_annotation_handle_items.append(handle)
+
+    def _clear_external_annotation_handles(self) -> None:
+        """Remove all transient vertex handles from the scene."""
+        item: QtWidgets.QGraphicsItem
+        for item in self.external_annotation_handle_items:
+            try:
+                if item.scene() is self:
+                    self.removeItem(item)
+            except RuntimeError:
+                # The scene may already have deleted C++ graphics objects after
+                # a full image clear. Dropping the stale Python reference is safe.
+                pass
+        self.external_annotation_handle_items = []
+
+    def _clear_external_annotation_graphics(self) -> None:
+        """Remove rendered native annotations and transient edit handles."""
+        item: QtWidgets.QGraphicsItem
+        for item in self.external_annotation_items:
+            try:
+                if item.scene() is self:
+                    self.removeItem(item)
+            except RuntimeError:
+                # See ``_clear_external_annotation_handles``.
+                pass
+        self.external_annotation_items = []
+        self._clear_external_annotation_handles()
+
+    def clear_external_annotation_selection(self) -> None:
+        """Clear the selected native annotation and its vertex handles."""
+        had_selection: bool = self.selected_external_annotation_index is not None
+        self.selected_external_annotation_index = None
+        self._clear_external_annotation_handles()
+        if had_selection:
+            self._rerender_external_annotations()
+
+    def select_external_annotation(self, annotation_index: int) -> None:
+        """Select one native annotation by internal index.
+
+        Args:
+            annotation_index: Index in ``external_annotations`` or ``-1`` to
+                clear selection.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            self.clear_external_annotation_selection()
+            return
+        self.selected_external_annotation_index = annotation_index
+        self._rerender_external_annotations()
+
+    def move_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+        point: QtCore.QPointF,
+    ) -> None:
+        """Move one selected annotation vertex in memory.
+
+        The geometry is persisted when the drag finishes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex index within the selected annotation.
+            point: New source-image pixel coordinate.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if vertex_index < 0 or vertex_index >= len(annotation.points):
+            return
+        annotation.points[vertex_index] = (point.x(), point.y())
+        self.selected_external_annotation_index = annotation_index
+        self._rerender_external_annotations()
+
+    def finish_external_annotation_vertex_move(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+    ) -> None:
+        """Persist an edited annotation after a vertex drag completes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex index that was moved. This is retained in the
+                API for future undo/redo support.
+        """
+        del vertex_index
+        if self.current_image_name is None:
+            return
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        try:
+            update_labelme_annotation(image_path, annotation)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The annotation edit could not be saved.\n\n{}").format(error),
+            )
+
+        self._reload_external_annotations_preserving_selection(
+            image_path, source_shape_index
+        )
+
+    def delete_selected_external_annotation(self) -> bool:
+        """Delete the currently selected native annotation from its sidecar.
+
+        Returns:
+            ``True`` when an annotation was deleted, otherwise ``False``.
+        """
+        if self.current_image_name is None:
+            return False
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return False
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return False
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        try:
+            delete_labelme_annotation(image_path, source_shape_index)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Delete Failed"),
+                self.tr("The annotation could not be deleted.\n\n{}").format(error),
+            )
+            return False
+
+        self.display_external_annotations(image_path)
+        return True
+
+    def _reload_external_annotations_preserving_selection(
+        self,
+        image_path: str,
+        source_shape_index: int,
+    ) -> None:
+        """Reload annotations and restore selection by LabelMe source index.
+
+        Args:
+            image_path: Active source image path.
+            source_shape_index: LabelMe shape index that should remain selected.
+        """
+        self.display_external_annotations(image_path)
+        annotation_index: int
+        annotation: Annotation
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            if annotation.source_shape_index == source_shape_index:
+                self.selected_external_annotation_index = annotation_index
+                self._rerender_external_annotations()
+                return
+
+    def _rerender_external_annotations(self) -> None:
+        """Re-render native annotations while preserving selection state."""
+        self._clear_external_annotation_graphics()
+
+        annotation_index: int
+        annotation: Annotation
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            self._render_external_annotation(annotation, annotation_index)
+        self._render_external_annotation_handles()
+
+    def refresh_external_annotation_styles(self) -> None:
+        """Re-render current native annotations using configured symbology."""
+        self._rerender_external_annotations()
 
     def display_grid(self):
         self.clear_grid()
@@ -673,6 +952,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.custom_fields = {'fields': [], 'data': {}}
         self.external_annotations = []
         self.external_annotation_document = None
+        self.external_annotation_items = []
 
         self.clear()
         self.directory = ''

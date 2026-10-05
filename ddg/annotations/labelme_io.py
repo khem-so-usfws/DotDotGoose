@@ -88,6 +88,7 @@ def append_labelme_annotation(
     if not isinstance(raw_shapes, list):
         raise ValueError("LabelMe 'shapes' value must be a list before saving.")
 
+    annotation.source_shape_index = len(raw_shapes)
     raw_shapes.append(annotation_to_labelme_shape(annotation))
 
     with json_path.open("w", encoding="utf-8") as file:
@@ -95,6 +96,125 @@ def append_labelme_annotation(
         file.write("\n")
 
     return json_path
+
+
+def update_labelme_annotation(
+    image_path: str | Path,
+    annotation: Annotation,
+) -> Path:
+    """Update one existing LabelMe shape from a native annotation.
+
+    Only fields managed by DDG are updated; unrelated shape fields and
+    top-level LabelMe metadata are preserved.
+
+    Args:
+        image_path: Source image associated with the annotation.
+        annotation: Annotation with a valid ``source_shape_index``.
+
+    Returns:
+        Path to the updated LabelMe JSON sidecar.
+
+    Raises:
+        FileNotFoundError: If the sidecar does not exist.
+        IndexError: If the annotation's source index is out of range.
+        ValueError: If the LabelMe document structure is invalid or the
+            annotation does not identify a source shape.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    raw_data: dict[str, Any] = _load_labelme_root(json_path)
+    raw_shapes: list[Any] = _require_shape_list(raw_data)
+    source_index: int | None = annotation.source_shape_index
+    if source_index is None:
+        raise ValueError("Annotation has no LabelMe source shape index.")
+    if source_index < 0 or source_index >= len(raw_shapes):
+        raise IndexError("Annotation source shape index is out of range.")
+
+    raw_shape: Any = raw_shapes[source_index]
+    if not isinstance(raw_shape, dict):
+        raise ValueError("LabelMe source shape must be an object.")
+
+    raw_shape["label"] = annotation.label
+    raw_shape["points"] = [[x, y] for x, y in annotation.points]
+    raw_shape["group_id"] = annotation.group_id
+    raw_shape["flags"] = dict(annotation.flags)
+    raw_shape["shape_type"] = (
+        annotation.source_shape_type or annotation.shape_type.value
+    )
+    _write_labelme_root(json_path, raw_data)
+    return json_path
+
+
+def delete_labelme_annotation(
+    image_path: str | Path,
+    source_shape_index: int,
+) -> Path:
+    """Delete one shape from an image's LabelMe sidecar.
+
+    Args:
+        image_path: Source image associated with the annotation.
+        source_shape_index: Zero-based shape index in the LabelMe ``shapes``
+            list.
+
+    Returns:
+        Path to the updated LabelMe JSON sidecar.
+
+    Raises:
+        FileNotFoundError: If the sidecar does not exist.
+        IndexError: If ``source_shape_index`` is out of range.
+        ValueError: If the LabelMe document structure is invalid.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    raw_data: dict[str, Any] = _load_labelme_root(json_path)
+    raw_shapes: list[Any] = _require_shape_list(raw_data)
+    if source_shape_index < 0 or source_shape_index >= len(raw_shapes):
+        raise IndexError("Annotation source shape index is out of range.")
+
+    raw_shapes.pop(source_shape_index)
+    _write_labelme_root(json_path, raw_data)
+    return json_path
+
+
+def _load_labelme_root(json_path: Path) -> dict[str, Any]:
+    """Load and validate a LabelMe root object.
+
+    Args:
+        json_path: LabelMe JSON path.
+
+    Returns:
+        Parsed LabelMe root object.
+    """
+    with json_path.open("r", encoding="utf-8") as file:
+        raw_data: Any = json.load(file)
+    if not isinstance(raw_data, dict):
+        raise ValueError("LabelMe JSON root must be an object.")
+    return raw_data
+
+
+def _require_shape_list(raw_data: dict[str, Any]) -> list[Any]:
+    """Return the validated LabelMe shapes list.
+
+    Args:
+        raw_data: Parsed LabelMe root object.
+
+    Returns:
+        Mutable shape list.
+    """
+    raw_shapes: Any = raw_data.get("shapes")
+    if not isinstance(raw_shapes, list):
+        raise ValueError("LabelMe 'shapes' value must be a list.")
+    return raw_shapes
+
+
+def _write_labelme_root(json_path: Path, raw_data: dict[str, Any]) -> None:
+    """Write one LabelMe document with stable formatting.
+
+    Args:
+        json_path: Destination LabelMe JSON path.
+        raw_data: LabelMe root object to write.
+    """
+    with json_path.open("w", encoding="utf-8") as file:
+        json.dump(raw_data, file, indent=2, ensure_ascii=False)
+        file.write("\n")
 
 
 def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
@@ -185,7 +305,9 @@ def load_labelme_document(image_path: str | Path) -> LabelMeDocument | None:
             continue
 
         try:
-            annotation: Annotation | None = _annotation_from_shape(raw_shape)
+            annotation: Annotation | None = _annotation_from_shape(
+                raw_shape, source_shape_index=index
+            )
         except (TypeError, ValueError) as error:
             document.warnings.append(f"Shape {index} was not loaded: {error}")
             continue
@@ -202,11 +324,15 @@ def load_labelme_document(image_path: str | Path) -> LabelMeDocument | None:
     return document
 
 
-def _annotation_from_shape(raw_shape: dict[str, Any]) -> Annotation | None:
+def _annotation_from_shape(
+    raw_shape: dict[str, Any],
+    source_shape_index: int | None = None,
+) -> Annotation | None:
     """Convert one LabelMe shape object to a normalized annotation.
 
     Args:
         raw_shape: LabelMe shape dictionary.
+        source_shape_index: Optional source position in the LabelMe shapes list.
 
     Returns:
         A normalized annotation, or ``None`` for unsupported shape types.
@@ -255,6 +381,7 @@ def _annotation_from_shape(raw_shape: dict[str, Any]) -> Annotation | None:
         flags=flags,
         source_shape_type=source_shape_type,
         annotation_id=annotation_id,
+        source_shape_index=source_shape_index,
     )
 
 

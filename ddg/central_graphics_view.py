@@ -26,11 +26,16 @@ from enum import Enum
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .annotations import AnnotationShape, load_annotation_style
+
 
 class InteractionMode(str, Enum):
     """Mouse interaction modes supported by the central image view."""
 
     COUNT = "count"
+    SELECT = "select"
+    POINT = "point"
+    LINE = "line"
     POLYGON = "polygon"
 
 
@@ -43,8 +48,15 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     toggle_points = QtCore.pyqtSignal()
     toggle_grid = QtCore.pyqtSignal()
     switch_class = QtCore.pyqtSignal(int)
+    annotation_point_completed = QtCore.pyqtSignal(QtCore.QPointF)
+    line_completed = QtCore.pyqtSignal(list)
     polygon_completed = QtCore.pyqtSignal(list)
     annotation_mode_changed = QtCore.pyqtSignal(str)
+    external_annotation_selected = QtCore.pyqtSignal(int)
+    external_annotation_vertex_moved = QtCore.pyqtSignal(int, int, QtCore.QPointF)
+    external_annotation_vertex_move_finished = QtCore.pyqtSignal(int, int)
+    external_annotation_delete_requested = QtCore.pyqtSignal()
+    external_annotation_selection_cleared = QtCore.pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         QtWidgets.QGraphicsView.__init__(self, parent)
@@ -55,8 +67,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.alt = False
         self.delay = 0
         self.interaction_mode: InteractionMode = InteractionMode.COUNT
+        self.line_points: list[QtCore.QPointF] = []
+        self.line_preview_item: QtWidgets.QGraphicsPathItem | None = None
         self.polygon_points: list[QtCore.QPointF] = []
         self.polygon_preview_item: QtWidgets.QGraphicsPathItem | None = None
+        self.dragging_annotation_vertex: tuple[int, int] | None = None
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
@@ -78,10 +93,16 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.setSceneRect(self.scene().itemsBoundingRect())
 
     def cancel_annotation(self) -> None:
-        """Cancel any in-progress annotation and return to count mode."""
+        """Cancel any annotation interaction and return to count mode."""
+        was_selection_mode: bool = self.interaction_mode is InteractionMode.SELECT
+        self._clear_line_preview()
         self._clear_polygon_preview()
+        self.line_points = []
         self.polygon_points = []
+        self.dragging_annotation_vertex = None
         self.interaction_mode = InteractionMode.COUNT
+        if was_selection_mode:
+            self.external_annotation_selection_cleared.emit()
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
     def reset_annotation_state(self, directory: str, file_name: str) -> None:
@@ -92,9 +113,49 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             file_name: Active image filename supplied by the canvas signal.
         """
         del directory, file_name
+        self.line_preview_item = None
         self.polygon_preview_item = None
+        self.line_points = []
         self.polygon_points = []
+        self.dragging_annotation_vertex = None
         self.interaction_mode = InteractionMode.COUNT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+
+    def start_annotation_selection(self) -> None:
+        """Enter native annotation selection/edit mode."""
+        self.cancel_annotation()
+        self.interaction_mode = InteractionMode.SELECT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+
+    def finish_line_annotation(self) -> None:
+        """Finish the current cutline when it contains valid geometry."""
+        if self.interaction_mode is not InteractionMode.LINE:
+            return
+        if len(self.line_points) < 2:
+            return
+
+        completed_points: list[QtCore.QPointF] = [
+            QtCore.QPointF(point) for point in self.line_points
+        ]
+        self._clear_line_preview()
+        self.line_points = []
+        self.interaction_mode = InteractionMode.COUNT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+        self.line_completed.emit(completed_points)
+
+    def start_landmark_annotation(self) -> None:
+        """Enter point annotation mode for a new landmark."""
+        self.cancel_annotation()
+        self.interaction_mode = InteractionMode.POINT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+    def start_line_annotation(self) -> None:
+        """Enter line annotation mode for a new cutline."""
+        self.cancel_annotation()
+        self.line_points = []
+        self.interaction_mode = InteractionMode.LINE
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
     def finish_polygon_annotation(self) -> None:
@@ -115,7 +176,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
 
     def start_polygon_annotation(self) -> None:
         """Enter polygon annotation mode for a new count region."""
-        self._clear_polygon_preview()
+        self.cancel_annotation()
         self.polygon_points = []
         self.interaction_mode = InteractionMode.POLYGON
         self.annotation_mode_changed.emit(self.interaction_mode.value)
@@ -126,9 +187,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             return
         if (
             event.key() in {QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter}
-            and self.interaction_mode is InteractionMode.POLYGON
+            and self.interaction_mode in {InteractionMode.LINE, InteractionMode.POLYGON}
         ):
-            self.finish_polygon_annotation()
+            if self.interaction_mode is InteractionMode.LINE:
+                self.finish_line_annotation()
+            else:
+                self.finish_polygon_annotation()
             return
         if event.key() == QtCore.Qt.Key.Key_Alt:
             self.alt = True
@@ -137,7 +201,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         elif event.key() == QtCore.Qt.Key.Key_Shift:
             self.shift = True
         elif event.key() == QtCore.Qt.Key.Key_Delete or event.key() == QtCore.Qt.Key.Key_Backspace:
-            self.delete_selection.emit()
+            if self.interaction_mode is InteractionMode.SELECT:
+                self.external_annotation_delete_requested.emit()
+            else:
+                self.delete_selection.emit()
         elif event.key() == QtCore.Qt.Key.Key_R:
             self.relabel_selection.emit()
         elif event.key() == QtCore.Qt.Key.Key_D:
@@ -174,17 +241,37 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.shift = False
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
-        """Finish a polygon on a left-button double-click."""
+        """Finish a line or polygon on a left-button double-click."""
         if (
-            self.interaction_mode is InteractionMode.POLYGON
+            self.interaction_mode in {InteractionMode.LINE, InteractionMode.POLYGON}
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
-            self.finish_polygon_annotation()
+            if self.interaction_mode is InteractionMode.LINE:
+                self.finish_line_annotation()
+            else:
+                self.finish_polygon_annotation()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if (
+            self.interaction_mode is InteractionMode.SELECT
+            and self.dragging_annotation_vertex is not None
+        ):
+            annotation_index: int
+            vertex_index: int
+            annotation_index, vertex_index = self.dragging_annotation_vertex
+            point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
+            self.external_annotation_vertex_moved.emit(
+                annotation_index, vertex_index, point
+            )
+            event.accept()
+            return
+        if self.interaction_mode is InteractionMode.LINE:
+            self._update_line_preview(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
         if self.interaction_mode is InteractionMode.POLYGON:
             self._update_polygon_preview(self.mapToScene(event.position().toPoint()))
             event.accept()
@@ -192,6 +279,48 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self.interaction_mode is InteractionMode.SELECT:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                item: QtWidgets.QGraphicsItem | None = self.itemAt(
+                    event.position().toPoint()
+                )
+                if item is None:
+                    self.external_annotation_selected.emit(-1)
+                    event.accept()
+                    return
+
+                item_kind: object = item.data(0)
+                if item_kind == "ddg_external_annotation_handle":
+                    annotation_index: int = int(item.data(1))
+                    vertex_index: int = int(item.data(2))
+                    self.dragging_annotation_vertex = (
+                        annotation_index,
+                        vertex_index,
+                    )
+                    self.external_annotation_selected.emit(annotation_index)
+                    event.accept()
+                    return
+                if item_kind == "ddg_external_annotation":
+                    self.external_annotation_selected.emit(int(item.data(1)))
+                    event.accept()
+                    return
+
+                self.external_annotation_selected.emit(-1)
+                event.accept()
+            return
+        if self.interaction_mode is InteractionMode.POINT:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
+                self.interaction_mode = InteractionMode.COUNT
+                self.annotation_mode_changed.emit(self.interaction_mode.value)
+                self.annotation_point_completed.emit(QtCore.QPointF(point))
+                event.accept()
+            return
+        if self.interaction_mode is InteractionMode.LINE:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self._add_line_vertex(self.mapToScene(event.position().toPoint()))
+                event.accept()
+            return
         if self.interaction_mode is InteractionMode.POLYGON:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 self._add_polygon_vertex(self.mapToScene(event.position().toPoint()))
@@ -207,11 +336,70 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if (
+            self.interaction_mode is InteractionMode.SELECT
+            and self.dragging_annotation_vertex is not None
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            annotation_index: int
+            vertex_index: int
+            annotation_index, vertex_index = self.dragging_annotation_vertex
+            self.dragging_annotation_vertex = None
+            self.external_annotation_vertex_move_finished.emit(
+                annotation_index, vertex_index
+            )
+            event.accept()
+            return
         if self.dragMode() == QtWidgets.QGraphicsView.DragMode.RubberBandDrag:
             rect = self.rubberBandRect()
             self.region_selected.emit(self.mapToScene(rect).boundingRect())
             QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+
+
+    def _add_line_vertex(self, point: QtCore.QPointF) -> None:
+        """Add one vertex to the in-progress cutline.
+
+        Args:
+            point: Scene/source-image coordinate of the new vertex.
+        """
+        self.line_points.append(QtCore.QPointF(point))
+        self._update_line_preview(point)
+
+    def _clear_line_preview(self) -> None:
+        """Remove the temporary in-progress cutline graphics item."""
+        if self.line_preview_item is not None:
+            scene: QtWidgets.QGraphicsScene | None = self.scene()
+            if scene is not None:
+                scene.removeItem(self.line_preview_item)
+            self.line_preview_item = None
+
+    def _update_line_preview(self, cursor_point: QtCore.QPointF) -> None:
+        """Redraw the temporary cutline path through current vertices.
+
+        Args:
+            cursor_point: Current scene coordinate used for the preview segment.
+        """
+        self._clear_line_preview()
+        if len(self.line_points) == 0:
+            return
+
+        path: QtGui.QPainterPath = QtGui.QPainterPath(self.line_points[0])
+        point: QtCore.QPointF
+        for point in self.line_points[1:]:
+            path.lineTo(point)
+        path.lineTo(cursor_point)
+
+        style = load_annotation_style(AnnotationShape.LINE)
+        pen: QtGui.QPen = QtGui.QPen(
+            QtGui.QColor(style.color),
+            style.width,
+            QtCore.Qt.PenStyle.DashLine,
+        )
+        scene: QtWidgets.QGraphicsScene | None = self.scene()
+        if scene is not None:
+            self.line_preview_item = scene.addPath(path, pen)
+            self.line_preview_item.setZValue(10.0)
 
     def _add_polygon_vertex(self, point: QtCore.QPointF) -> None:
         """Add one vertex to the in-progress polygon.
@@ -248,9 +436,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         if len(self.polygon_points) >= 2:
             path.lineTo(self.polygon_points[0])
 
+        style = load_annotation_style(AnnotationShape.POLYGON)
         pen: QtGui.QPen = QtGui.QPen(
-            QtCore.Qt.GlobalColor.magenta,
-            3,
+            QtGui.QColor(style.color),
+            style.width,
             QtCore.Qt.PenStyle.DashLine,
         )
         scene: QtWidgets.QGraphicsScene | None = self.scene()
