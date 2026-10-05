@@ -47,6 +47,23 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.setObjectName('File')
         menu.addAction(self.tr('Quit'), self.quit)
 
+        annotation_menu = self.menuBar().addMenu(self.tr("Annotations"))
+        annotation_menu.setObjectName("Annotations")
+        draw_polygon_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Draw Count Region Polygon")
+        )
+        draw_polygon_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+P"))
+        draw_polygon_action.triggered.connect(self.start_count_region_polygon)
+        cancel_annotation_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Cancel Annotation")
+        )
+        cancel_annotation_action.triggered.connect(
+            self.centralWidget().cancel_annotation
+        )
+        self.centralWidget().graphicsView.annotation_mode_changed.connect(
+            self.annotation_mode_changed
+        )
+
         menu = self.menuBar().addMenu(self.tr('Language'))
         menu.setObjectName('Language')
         menu.addAction(self.tr('Chinese (Mandarin)'), self.zh_Hans_CN)
@@ -59,6 +76,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.menuBar().addSeparator()
 
         self.menuBar().addAction(self.tr('About'), self.about_dialog.show)
+
+    def annotation_mode_changed(self, mode: str) -> None:
+        """Show concise guidance when annotation mode changes.
+
+        Args:
+            mode: Current graphics-view interaction mode.
+        """
+        if mode == "polygon":
+            self.statusBar().showMessage(
+                self.tr(
+                    "Count-region polygon: click vertices; Enter or double-click "
+                    "to finish; Esc to cancel."
+                )
+            )
+        else:
+            self.statusBar().clearMessage()
+
+    def start_count_region_polygon(self) -> None:
+        """Start native count-region polygon drawing."""
+        self.centralWidget().start_count_region_polygon()
 
     def closeEvent(self, event):
         if self.centralWidget().canvas.dirty_data_check():

@@ -22,7 +22,16 @@
 # along with with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 # --------------------------------------------------------------------------
-from PyQt6 import QtWidgets, QtCore
+from enum import Enum
+
+from PyQt6 import QtCore, QtGui, QtWidgets
+
+
+class InteractionMode(str, Enum):
+    """Mouse interaction modes supported by the central image view."""
+
+    COUNT = "count"
+    POLYGON = "polygon"
 
 
 class CentralGraphicsView(QtWidgets.QGraphicsView):
@@ -34,8 +43,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     toggle_points = QtCore.pyqtSignal()
     toggle_grid = QtCore.pyqtSignal()
     switch_class = QtCore.pyqtSignal(int)
+    polygon_completed = QtCore.pyqtSignal(list)
+    annotation_mode_changed = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         QtWidgets.QGraphicsView.__init__(self, parent)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -43,27 +54,82 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.ctrl = False
         self.alt = False
         self.delay = 0
+        self.interaction_mode: InteractionMode = InteractionMode.COUNT
+        self.polygon_points: list[QtCore.QPointF] = []
+        self.polygon_preview_item: QtWidgets.QGraphicsPathItem | None = None
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
-    def enterEvent(self, event):
+    def enterEvent(self, event: QtCore.QEvent) -> None:
         self.setFocus()
 
-    def dragEnterEvent(self, event):
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         event.setAccepted(True)
 
-    def dragMoveEvent(self, event):
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
         pass
 
-    def dropEvent(self, event):
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:
         if len(event.mimeData().urls()) > 0:
             self.drop_complete.emit(event.mimeData().urls())
 
-    def image_loaded(self, directory, file_name):
+    def image_loaded(self, directory: str, file_name: str) -> None:
         self.resetTransform()
         self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
         self.setSceneRect(self.scene().itemsBoundingRect())
 
-    def keyPressEvent(self, event):
+    def cancel_annotation(self) -> None:
+        """Cancel any in-progress annotation and return to count mode."""
+        self._clear_polygon_preview()
+        self.polygon_points = []
+        self.interaction_mode = InteractionMode.COUNT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+    def reset_annotation_state(self, directory: str, file_name: str) -> None:
+        """Discard transient annotation state after an image change.
+
+        Args:
+            directory: Active image directory supplied by the canvas signal.
+            file_name: Active image filename supplied by the canvas signal.
+        """
+        del directory, file_name
+        self.polygon_preview_item = None
+        self.polygon_points = []
+        self.interaction_mode = InteractionMode.COUNT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+    def finish_polygon_annotation(self) -> None:
+        """Finish the current polygon when it contains valid geometry."""
+        if self.interaction_mode is not InteractionMode.POLYGON:
+            return
+        if len(self.polygon_points) < 3:
+            return
+
+        completed_points: list[QtCore.QPointF] = [
+            QtCore.QPointF(point) for point in self.polygon_points
+        ]
+        self._clear_polygon_preview()
+        self.polygon_points = []
+        self.interaction_mode = InteractionMode.COUNT
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+        self.polygon_completed.emit(completed_points)
+
+    def start_polygon_annotation(self) -> None:
+        """Enter polygon annotation mode for a new count region."""
+        self._clear_polygon_preview()
+        self.polygon_points = []
+        self.interaction_mode = InteractionMode.POLYGON
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.cancel_annotation()
+            return
+        if (
+            event.key() in {QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter}
+            and self.interaction_mode is InteractionMode.POLYGON
+        ):
+            self.finish_polygon_annotation()
+            return
         if event.key() == QtCore.Qt.Key.Key_Alt:
             self.alt = True
         elif event.key() == QtCore.Qt.Key.Key_Control:
@@ -99,7 +165,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         elif event.key() == QtCore.Qt.Key.Key_0:
             self.switch_class.emit(9)
 
-    def keyReleaseEvent(self, event):
+    def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key.Key_Alt:
             self.alt = False
         elif event.key() == QtCore.Qt.Key.Key_Control:
@@ -107,10 +173,30 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         elif event.key() == QtCore.Qt.Key.Key_Shift:
             self.shift = False
 
-    def mouseMoveEvent(self, event):
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Finish a polygon on a left-button double-click."""
+        if (
+            self.interaction_mode is InteractionMode.POLYGON
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            self.finish_polygon_annotation()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self.interaction_mode is InteractionMode.POLYGON:
+            self._update_polygon_preview(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
         QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self.interaction_mode is InteractionMode.POLYGON:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self._add_polygon_vertex(self.mapToScene(event.position().toPoint()))
+                event.accept()
+            return
         if self.ctrl:
             self.add_point.emit(self.mapToScene(event.pos()))
         elif self.shift:
@@ -120,36 +206,81 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
 
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if self.dragMode() == QtWidgets.QGraphicsView.DragMode.RubberBandDrag:
             rect = self.rubberBandRect()
             self.region_selected.emit(self.mapToScene(rect).boundingRect())
             QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
 
-    def resizeEvent(self, event):
+    def _add_polygon_vertex(self, point: QtCore.QPointF) -> None:
+        """Add one vertex to the in-progress polygon.
+
+        Args:
+            point: Scene/source-image coordinate of the new vertex.
+        """
+        self.polygon_points.append(QtCore.QPointF(point))
+        self._update_polygon_preview(point)
+
+    def _clear_polygon_preview(self) -> None:
+        """Remove the temporary in-progress polygon graphics item."""
+        if self.polygon_preview_item is not None:
+            scene: QtWidgets.QGraphicsScene | None = self.scene()
+            if scene is not None:
+                scene.removeItem(self.polygon_preview_item)
+            self.polygon_preview_item = None
+
+    def _update_polygon_preview(self, cursor_point: QtCore.QPointF) -> None:
+        """Redraw the temporary polygon path through current vertices.
+
+        Args:
+            cursor_point: Current scene coordinate used for the preview segment.
+        """
+        self._clear_polygon_preview()
+        if len(self.polygon_points) == 0:
+            return
+
+        path: QtGui.QPainterPath = QtGui.QPainterPath(self.polygon_points[0])
+        point: QtCore.QPointF
+        for point in self.polygon_points[1:]:
+            path.lineTo(point)
+        path.lineTo(cursor_point)
+        if len(self.polygon_points) >= 2:
+            path.lineTo(self.polygon_points[0])
+
+        pen: QtGui.QPen = QtGui.QPen(
+            QtCore.Qt.GlobalColor.magenta,
+            3,
+            QtCore.Qt.PenStyle.DashLine,
+        )
+        scene: QtWidgets.QGraphicsScene | None = self.scene()
+        if scene is not None:
+            self.polygon_preview_item = scene.addPath(path, pen)
+            self.polygon_preview_item.setZValue(10.0)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         self.resize_image()
 
-    def resize_image(self):
+    def resize_image(self) -> None:
         vsb = self.verticalScrollBar().isVisible()
         hsb = self.horizontalScrollBar().isVisible()
         if not (vsb or hsb):
             self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
             self.setSceneRect(self.scene().itemsBoundingRect())
 
-    def wheelEvent(self, event):
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if len(self.scene().items()) > 0:
             if event.angleDelta().y() > 0:
                 self.zoom_in()
             else:
                 self.zoom_out()
 
-    def zoom_in(self):
+    def zoom_in(self) -> None:
         self.scale(1.1, 1.1)
         # Fix for MacOS and PyQt5 > v5.10
         self.repaint()
 
-    def zoom_out(self):
+    def zoom_out(self) -> None:
         self.scale(0.9, 0.9)
         # Fix for MacOS and PyQt5 > v5.10
         self.repaint()

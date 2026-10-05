@@ -42,6 +42,107 @@ def labelme_path_for_image(image_path: str | Path) -> Path:
     return Path(image_path).with_suffix(".json")
 
 
+def append_labelme_annotation(
+    image_path: str | Path,
+    annotation: Annotation,
+    image_width: int | None = None,
+    image_height: int | None = None,
+) -> Path:
+    """Append one DDG annotation to an image's LabelMe sidecar.
+
+    Existing LabelMe content is preserved verbatim except for the addition of
+    one new object to the ``shapes`` list. If no sidecar exists, a minimal
+    LabelMe-compatible document is created.
+
+    Args:
+        image_path: Source image associated with the annotation.
+        annotation: Native DDG annotation to append.
+        image_width: Optional source-image width in pixels.
+        image_height: Optional source-image height in pixels.
+
+    Returns:
+        Path to the written LabelMe JSON sidecar.
+
+    Raises:
+        json.JSONDecodeError: If an existing sidecar contains malformed JSON.
+        OSError: If the sidecar cannot be read or written.
+        ValueError: If an existing JSON root or ``shapes`` value is invalid.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    raw_data: dict[str, Any]
+
+    if json_path.exists():
+        with json_path.open("r", encoding="utf-8") as file:
+            loaded_data: Any = json.load(file)
+        if not isinstance(loaded_data, dict):
+            raise ValueError("LabelMe JSON root must be an object.")
+        raw_data = loaded_data
+    else:
+        raw_data = _new_labelme_document(
+            image_path=image_path,
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+    raw_shapes: Any = raw_data.setdefault("shapes", [])
+    if not isinstance(raw_shapes, list):
+        raise ValueError("LabelMe 'shapes' value must be a list before saving.")
+
+    raw_shapes.append(annotation_to_labelme_shape(annotation))
+
+    with json_path.open("w", encoding="utf-8") as file:
+        json.dump(raw_data, file, indent=2, ensure_ascii=False)
+        file.write("\n")
+
+    return json_path
+
+
+def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
+    """Convert a native annotation to a LabelMe shape dictionary.
+
+    Args:
+        annotation: Native DDG annotation.
+
+    Returns:
+        LabelMe-compatible shape dictionary.
+    """
+    shape_type: str = annotation.shape_type.value
+    return {
+        "label": annotation.label,
+        "points": [[x, y] for x, y in annotation.points],
+        "group_id": annotation.group_id,
+        "description": "",
+        "shape_type": shape_type,
+        "flags": dict(annotation.flags),
+    }
+
+
+def _new_labelme_document(
+    image_path: str | Path,
+    image_width: int | None,
+    image_height: int | None,
+) -> dict[str, Any]:
+    """Create a minimal LabelMe-compatible document.
+
+    Args:
+        image_path: Source image path.
+        image_width: Optional image width in pixels.
+        image_height: Optional image height in pixels.
+
+    Returns:
+        New LabelMe-compatible JSON object.
+    """
+    return {
+        "version": "5.0.1",
+        "flags": {},
+        "shapes": [],
+        "imagePath": Path(image_path).name,
+        "imageData": None,
+        "imageHeight": image_height,
+        "imageWidth": image_width,
+    }
+
+
 def load_labelme_document(image_path: str | Path) -> LabelMeDocument | None:
     """Load supported annotations from an image's LabelMe JSON sidecar.
 

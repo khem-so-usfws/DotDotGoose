@@ -34,6 +34,7 @@ from .annotations import (
     Annotation,
     AnnotationShape,
     LabelMeDocument,
+    append_labelme_annotation,
     load_labelme_document,
 )
 
@@ -74,6 +75,7 @@ class Canvas(QtWidgets.QGraphicsScene):
 
         self.selected_pen = QtGui.QPen(QtGui.QBrush(QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern), 1)
         self.external_annotations: list[Annotation] = []
+        self.external_annotation_document: LabelMeDocument | None = None
 
     def add_class(self, class_name):
         if class_name not in self.classes:
@@ -156,6 +158,48 @@ class Canvas(QtWidgets.QGraphicsScene):
                 proceed = False
         return proceed
 
+    def add_polygon_annotation(self, points: list[QtCore.QPointF]) -> None:
+        """Create and immediately save a count-region polygon.
+
+        Args:
+            points: Polygon vertices in scene/source-image pixel coordinates.
+        """
+        if self.current_image_name is None or len(points) < 3:
+            return
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        annotation: Annotation = Annotation(
+            label="count_region",
+            shape_type=AnnotationShape.POLYGON,
+            points=[(point.x(), point.y()) for point in points],
+        )
+        image_height: int | None = None
+        image_width: int | None = None
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if image_data is not None and image_data.ndim >= 2:
+            image_height = int(image_data.shape[0])
+            image_width = int(image_data.shape[1])
+
+        try:
+            append_labelme_annotation(
+                image_path=image_path,
+                annotation=annotation,
+                image_width=image_width,
+                image_height=image_height,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr(
+                    "The count-region polygon could not be saved.\n\n{}"
+                ).format(error),
+            )
+            return
+
+        self.external_annotations.append(annotation)
+        self._render_external_annotation(annotation)
+
     def display_external_annotations(self, file_name: str) -> None:
         """Render supported LabelMe annotations for an image.
 
@@ -168,6 +212,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             file_name: Full path to the source image.
         """
         self.external_annotations = []
+        self.external_annotation_document = None
         try:
             document: LabelMeDocument | None = load_labelme_document(file_name)
         except (OSError, json.JSONDecodeError, ValueError):
@@ -176,47 +221,55 @@ class Canvas(QtWidgets.QGraphicsScene):
         if document is None:
             return
 
+        self.external_annotation_document = document
         self.external_annotations = document.annotations
+        annotation: Annotation
+        for annotation in self.external_annotations:
+            self._render_external_annotation(annotation)
+
+    def _render_external_annotation(self, annotation: Annotation) -> None:
+        """Render one native annotation on the current graphics scene.
+
+        Args:
+            annotation: Annotation to render.
+        """
         annotation_brush: QtGui.QBrush = QtGui.QBrush(
             QtCore.Qt.GlobalColor.magenta,
             QtCore.Qt.BrushStyle.SolidPattern,
         )
         annotation_pen: QtGui.QPen = QtGui.QPen(annotation_brush, 4)
+        item: QtWidgets.QGraphicsItem | None = None
 
-        annotation: Annotation
-        for annotation in self.external_annotations:
-            item: QtWidgets.QGraphicsItem | None = None
+        if annotation.shape_type is AnnotationShape.POINT:
+            x: float
+            y: float
+            x, y = annotation.points[0]
+            path: QtGui.QPainterPath = QtGui.QPainterPath()
+            path.addEllipse(QtCore.QPointF(x, y), 6.0, 6.0)
+            item = self.addPath(path, annotation_pen)
 
-            if annotation.shape_type is AnnotationShape.POINT:
-                x: float
-                y: float
-                x, y = annotation.points[0]
-                path: QtGui.QPainterPath = QtGui.QPainterPath()
-                path.addEllipse(QtCore.QPointF(x, y), 6.0, 6.0)
-                item = self.addPath(path, annotation_pen)
+        elif annotation.shape_type is AnnotationShape.LINE:
+            first_x: float
+            first_y: float
+            first_x, first_y = annotation.points[0]
+            path = QtGui.QPainterPath(QtCore.QPointF(first_x, first_y))
+            for x, y in annotation.points[1:]:
+                path.lineTo(x, y)
+            item = self.addPath(path, annotation_pen)
 
-            elif annotation.shape_type is AnnotationShape.LINE:
-                first_x: float
-                first_y: float
-                first_x, first_y = annotation.points[0]
-                path = QtGui.QPainterPath(QtCore.QPointF(first_x, first_y))
-                for x, y in annotation.points[1:]:
-                    path.lineTo(x, y)
-                item = self.addPath(path, annotation_pen)
+        elif annotation.shape_type is AnnotationShape.POLYGON:
+            polygon_points: list[QtCore.QPointF] = [
+                QtCore.QPointF(x, y) for x, y in annotation.points
+            ]
+            item = self.addPolygon(
+                QtGui.QPolygonF(polygon_points),
+                annotation_pen,
+            )
 
-            elif annotation.shape_type is AnnotationShape.POLYGON:
-                polygon_points: list[QtCore.QPointF] = [
-                    QtCore.QPointF(x, y) for x, y in annotation.points
-                ]
-                item = self.addPolygon(
-                    QtGui.QPolygonF(polygon_points),
-                    annotation_pen,
-                )
-
-            if item is not None:
-                item.setZValue(2.0)
-                if annotation.label:
-                    item.setToolTip(annotation.label)
+        if item is not None:
+            item.setZValue(2.0)
+            if annotation.label:
+                item.setToolTip(annotation.label)
 
     def display_grid(self):
         self.clear_grid()
@@ -619,6 +672,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.coordinates = {}
         self.custom_fields = {'fields': [], 'data': {}}
         self.external_annotations = []
+        self.external_annotation_document = None
 
         self.clear()
         self.directory = ''

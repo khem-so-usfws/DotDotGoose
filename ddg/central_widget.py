@@ -95,7 +95,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.graphicsView.toggle_grid.connect(self.point_widget.checkBoxDisplayGrid.toggle)
         self.graphicsView.switch_class.connect(self.point_widget.set_active_class)
         self.graphicsView.add_point.connect(self.canvas.add_point)
+        self.graphicsView.polygon_completed.connect(self.canvas.add_polygon_annotation)
         self.canvas.image_loaded.connect(self.graphicsView.image_loaded)
+        self.canvas.image_loaded.connect(self.graphicsView.reset_annotation_state)
         self.canvas.directory_set.connect(self.display_working_directory)
 
         # Image data fields
@@ -128,6 +130,26 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
         self.lineEditSurveyId.textChanged.connect(self.canvas.update_survey_id)
         self.canvas.points_loaded.connect(self.lineEditSurveyId.setText)
+
+    def cancel_annotation(self) -> None:
+        """Cancel the in-progress native annotation, if any."""
+        self.graphicsView.cancel_annotation()
+
+    def start_count_region_polygon(self) -> bool:
+        """Start drawing a count-region polygon on the active image.
+
+        Returns:
+            ``True`` when polygon mode was started, otherwise ``False``.
+        """
+        if not self.canvas.current_image_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("No Image Loaded"),
+                self.tr("Load an image before drawing a count region."),
+            )
+            return False
+        self.graphicsView.start_polygon_annotation()
+        return True
 
     def resizeEvent(self, theEvent):
         self.graphicsView.resize_image()
