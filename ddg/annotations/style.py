@@ -96,3 +96,47 @@ def save_annotation_style(
     key_prefix: str = f"annotations/symbology/{shape_type.value}"
     active_settings.setValue(f"{key_prefix}/color", style.color)
     active_settings.setValue(f"{key_prefix}/width", style.width)
+
+
+def annotation_visibility_enabled(
+    shape_type: AnnotationShape,
+    settings: QtCore.QSettings | None = None,
+) -> bool:
+    """Return whether one annotation geometry type should be displayed.
+
+    Args:
+        shape_type: Annotation geometry whose visibility should be checked.
+        settings: Optional settings object, primarily for tests.
+
+    Returns:
+        Persisted visibility state, defaulting to visible.
+    """
+    active_settings: QtCore.QSettings = settings or QtCore.QSettings(
+        "AMNH", "DotDotGoose"
+    )
+    value: object = active_settings.value(
+        f"annotations/visibility/{shape_type.value}", True
+    )
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def save_annotation_visibility(
+    shape_type: AnnotationShape,
+    visible: bool,
+    settings: QtCore.QSettings | None = None,
+) -> None:
+    """Persist display visibility for one annotation geometry type.
+
+    Args:
+        shape_type: Annotation geometry whose visibility should be saved.
+        visible: Whether annotations of this type should be rendered.
+        settings: Optional settings object, primarily for tests.
+    """
+    active_settings: QtCore.QSettings = settings or QtCore.QSettings(
+        "AMNH", "DotDotGoose"
+    )
+    active_settings.setValue(
+        f"annotations/visibility/{shape_type.value}", visible
+    )

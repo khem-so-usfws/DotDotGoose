@@ -27,6 +27,7 @@ from PyQt6 import QtWidgets, QtCore, QtGui
 from ddg import AboutDialog
 from ddg import __version__
 from ddg.annotation_symbology_dialog import AnnotationSymbologyDialog
+from ddg.annotations import AnnotationShape
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -56,6 +57,25 @@ class MainWindow(QtWidgets.QMainWindow):
         select_annotation_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         select_annotation_action.triggered.connect(self.start_annotation_selection)
 
+        annotation_properties_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Annotation Properties...")
+        )
+        annotation_properties_action.triggered.connect(
+            self.centralWidget().edit_selected_annotation_properties
+        )
+        lock_annotation_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Lock Selected Annotation")
+        )
+        lock_annotation_action.triggered.connect(
+            lambda: self.centralWidget().set_selected_annotation_locked(True)
+        )
+        unlock_annotation_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Unlock Selected Annotation")
+        )
+        unlock_annotation_action.triggered.connect(
+            lambda: self.centralWidget().set_selected_annotation_locked(False)
+        )
+
         annotation_menu.addSeparator()
         draw_landmark_action: QtGui.QAction = annotation_menu.addAction(
             self.tr("Draw Landmark Point")
@@ -74,6 +94,100 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         draw_polygon_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+P"))
         draw_polygon_action.triggered.connect(self.start_count_region_polygon)
+
+        use_whole_image_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Use Whole Image as Count Region")
+        )
+        use_whole_image_action.triggered.connect(
+            self.centralWidget().use_whole_image_count_region
+        )
+
+        annotation_menu.addSeparator()
+        dim_outside_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Dim Outside Count Region")
+        )
+        dim_outside_action.setCheckable(True)
+        dim_outside_action.setChecked(
+            self.centralWidget().canvas.dim_outside_count_region_enabled()
+        )
+        dim_outside_action.toggled.connect(
+            self.centralWidget().canvas.set_dim_outside_count_region
+        )
+
+        highlight_outside_points_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Highlight Points Outside Count Region")
+        )
+        highlight_outside_points_action.setCheckable(True)
+        highlight_outside_points_action.setChecked(
+            self.centralWidget().canvas.highlight_outside_count_region_points_enabled()
+        )
+        highlight_outside_points_action.toggled.connect(
+            self.centralWidget().canvas.set_highlight_outside_count_region_points
+        )
+
+        warn_outside_point_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Warn When Adding Point Outside Count Region")
+        )
+        warn_outside_point_action.setCheckable(True)
+        warn_outside_point_action.setChecked(
+            self.centralWidget().canvas.warn_outside_count_region_point_enabled()
+        )
+        warn_outside_point_action.toggled.connect(
+            self.centralWidget().canvas.set_warn_outside_count_region_point
+        )
+
+        count_region_qa_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Count Region QA...")
+        )
+        count_region_qa_action.triggered.connect(
+            self.centralWidget().show_count_region_qa
+        )
+
+        annotation_menu.addSeparator()
+        show_points_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Show Point Annotations")
+        )
+        show_points_action.setCheckable(True)
+        show_points_action.setChecked(
+            self.centralWidget().canvas.annotation_type_visible(
+                AnnotationShape.POINT
+            )
+        )
+        show_points_action.toggled.connect(
+            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+                AnnotationShape.POINT, visible
+            )
+        )
+
+        show_lines_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Show Line Annotations")
+        )
+        show_lines_action.setCheckable(True)
+        show_lines_action.setChecked(
+            self.centralWidget().canvas.annotation_type_visible(
+                AnnotationShape.LINE
+            )
+        )
+        show_lines_action.toggled.connect(
+            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+                AnnotationShape.LINE, visible
+            )
+        )
+
+        show_polygons_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Show Polygon Annotations")
+        )
+        show_polygons_action.setCheckable(True)
+        show_polygons_action.setChecked(
+            self.centralWidget().canvas.annotation_type_visible(
+                AnnotationShape.POLYGON
+            )
+        )
+        show_polygons_action.toggled.connect(
+            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+                AnnotationShape.POLYGON, visible
+            )
+        )
 
         annotation_menu.addSeparator()
         symbology_action: QtGui.QAction = annotation_menu.addAction(
@@ -116,7 +230,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tr(
                     "Annotation edit: drag a shape to move it; drag a vertex "
                     "handle to reshape it; right-click a shape/vertex for insert "
-                    "or delete; Ctrl+Z/Ctrl+Y undo/redo; Esc exits edit mode."
+                    "or delete; locked annotations can be selected but not "
+                    "moved; Ctrl+Z/Ctrl+Y undo/redo; Esc exits edit mode."
                 )
             )
         elif mode == "point":

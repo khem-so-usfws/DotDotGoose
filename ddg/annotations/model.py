@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, TypeAlias
 
 Point: TypeAlias = tuple[float, float]
+LOCK_FLAG_KEY: str = "ddg_locked"
 
 
 class AnnotationShape(str, Enum):
@@ -61,3 +62,30 @@ class Annotation:
             raise ValueError("Line annotations require at least two vertices.")
         if self.shape_type is AnnotationShape.POLYGON and point_count < 3:
             raise ValueError("Polygon annotations require at least three vertices.")
+
+    @property
+    def locked(self) -> bool:
+        """Return whether DDG editing is locked for this annotation.
+
+        The state is stored in the LabelMe-compatible ``flags`` dictionary so
+        external tools can preserve it without needing a DDG-specific schema.
+
+        Returns:
+            ``True`` when the annotation should be protected from geometry or
+            deletion edits.
+        """
+        value: Any = self.flags.get(LOCK_FLAG_KEY, False)
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def set_locked(self, locked: bool) -> None:
+        """Set the persistent DDG edit-lock state.
+
+        Args:
+            locked: Whether geometry/deletion editing should be disabled.
+        """
+        if locked:
+            self.flags[LOCK_FLAG_KEY] = True
+        else:
+            self.flags.pop(LOCK_FLAG_KEY, None)

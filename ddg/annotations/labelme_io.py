@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -91,10 +94,57 @@ def append_labelme_annotation(
     annotation.source_shape_index = len(raw_shapes)
     raw_shapes.append(annotation_to_labelme_shape(annotation))
 
-    with json_path.open("w", encoding="utf-8") as file:
-        json.dump(raw_data, file, indent=2, ensure_ascii=False)
-        file.write("\n")
+    _write_labelme_root(json_path, raw_data)
 
+    return json_path
+
+
+def replace_labelme_annotations_by_label(
+    image_path: str | Path,
+    label: str,
+    annotations: list[Annotation],
+    image_width: int | None = None,
+    image_height: int | None = None,
+) -> Path:
+    """Replace all LabelMe shapes with one semantic label.
+
+    Unrelated shapes and top-level metadata are preserved. The replacement
+    annotations are appended after all retained shapes and receive updated
+    ``source_shape_index`` values.
+
+    Args:
+        image_path: Source image associated with the annotations.
+        label: Label whose existing shapes should be removed.
+        annotations: Replacement native annotations.
+        image_width: Optional source-image width for a new sidecar.
+        image_height: Optional source-image height for a new sidecar.
+
+    Returns:
+        Path to the written LabelMe JSON sidecar.
+    """
+    json_path: Path = labelme_path_for_image(image_path)
+    if json_path.exists():
+        raw_data: dict[str, Any] = _load_labelme_root(json_path)
+    else:
+        raw_data = _new_labelme_document(
+            image_path=image_path,
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+    raw_shapes: list[Any] = _require_shape_list(raw_data)
+    retained_shapes: list[Any] = [
+        raw_shape
+        for raw_shape in raw_shapes
+        if not (isinstance(raw_shape, dict) and raw_shape.get("label") == label)
+    ]
+
+    for annotation in annotations:
+        annotation.source_shape_index = len(retained_shapes)
+        retained_shapes.append(annotation_to_labelme_shape(annotation))
+
+    raw_data["shapes"] = retained_shapes
+    _write_labelme_root(json_path, raw_data)
     return json_path
 
 
@@ -205,16 +255,73 @@ def _require_shape_list(raw_data: dict[str, Any]) -> list[Any]:
     return raw_shapes
 
 
+def _labelme_backup_path(json_path: Path) -> Path:
+    """Return the rolling backup path for a LabelMe sidecar.
+
+    Args:
+        json_path: Live LabelMe JSON path.
+
+    Returns:
+        Adjacent backup path ending in ``.json.bak``.
+    """
+    return json_path.with_name(f"{json_path.name}.bak")
+
+
+def _backup_existing_labelme_root(json_path: Path) -> Path | None:
+    """Copy an existing sidecar to its rolling backup path.
+
+    Args:
+        json_path: Live LabelMe JSON path.
+
+    Returns:
+        Backup path when a live sidecar existed, otherwise ``None``.
+    """
+    if not json_path.exists():
+        return None
+    backup_path: Path = _labelme_backup_path(json_path)
+    shutil.copy2(json_path, backup_path)
+    return backup_path
+
+
 def _write_labelme_root(json_path: Path, raw_data: dict[str, Any]) -> None:
-    """Write one LabelMe document with stable formatting.
+    """Atomically write one LabelMe document with a rolling backup.
+
+    The replacement JSON is serialized to a temporary file in the same
+    directory, flushed to disk, and only then swapped into place with
+    ``os.replace``. When a live sidecar already exists, its previous contents
+    are copied to ``<name>.json.bak`` before the atomic replacement.
 
     Args:
         json_path: Destination LabelMe JSON path.
         raw_data: LabelMe root object to write.
+
+    Raises:
+        OSError: If the temporary file, backup, flush, or replacement fails.
+        TypeError: If ``raw_data`` contains values that JSON cannot serialize.
     """
-    with json_path.open("w", encoding="utf-8") as file:
-        json.dump(raw_data, file, indent=2, ensure_ascii=False)
-        file.write("\n")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=json_path.parent,
+            prefix=f".{json_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            json.dump(raw_data, temporary_file, indent=2, ensure_ascii=False)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+            temporary_path = Path(temporary_file.name)
+
+        _backup_existing_labelme_root(json_path)
+        os.replace(temporary_path, json_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 
@@ -250,6 +357,7 @@ def write_labelme_raw_document(
     json_path: Path = labelme_path_for_image(image_path)
     if raw_data is None:
         if json_path.exists():
+            _backup_existing_labelme_root(json_path)
             json_path.unlink()
         return json_path
 

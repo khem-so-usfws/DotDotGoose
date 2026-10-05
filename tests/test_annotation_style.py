@@ -7,8 +7,10 @@ from PyQt6 import QtCore
 from ddg.annotations import (
     AnnotationShape,
     AnnotationStyle,
+    annotation_visibility_enabled,
     load_annotation_style,
     save_annotation_style,
+    save_annotation_visibility,
 )
 
 
@@ -42,3 +44,17 @@ def test_invalid_stored_style_falls_back_to_defaults(tmp_path) -> None:
 
     assert style.color == "#ff00ff"
     assert style.width == 4.0
+
+
+def test_annotation_visibility_round_trip(tmp_path) -> None:
+    """Per-type visibility should persist independently of annotation JSON."""
+    settings_path = tmp_path / "ddg-visibility-test.ini"
+    settings: QtCore.QSettings = QtCore.QSettings(
+        str(settings_path), QtCore.QSettings.Format.IniFormat
+    )
+
+    save_annotation_visibility(AnnotationShape.LINE, False, settings)
+    settings.sync()
+
+    assert annotation_visibility_enabled(AnnotationShape.LINE, settings) is False
+    assert annotation_visibility_enabled(AnnotationShape.POINT, settings) is True

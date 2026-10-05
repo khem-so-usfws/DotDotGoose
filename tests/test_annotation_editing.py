@@ -246,3 +246,63 @@ def test_annotation_creation_can_be_undone_and_redone(qtbot, tmp_path: Path) -> 
     assert image_path.with_suffix(".json").exists()
     assert len(canvas.external_annotations) == 1
     assert canvas.external_annotations[0].points == [(12.0, 34.0)]
+
+
+def test_locked_annotation_refuses_geometry_edit(qtbot, tmp_path: Path) -> None:
+    """Locked annotations should not move or delete until explicitly unlocked."""
+    image_path: Path = tmp_path / "IMG_5008.JPG"
+    image_path.write_bytes(b"")
+    raw_data: dict[str, Any] = {
+        "shapes": [
+            {
+                "label": "count_region",
+                "points": [[10, 10], [50, 10], [50, 50]],
+                "group_id": None,
+                "shape_type": "polygon",
+                "flags": {"ddg_locked": True},
+            }
+        ]
+    }
+    image_path.with_suffix(".json").write_text(
+        json.dumps(raw_data), encoding="utf-8"
+    )
+    canvas: Canvas = Canvas()
+    canvas.directory = str(tmp_path)
+    canvas.current_image_name = image_path.name
+    canvas.display_external_annotations(str(image_path))
+    canvas.select_external_annotation(0)
+
+    canvas.move_external_annotation(0, QtCore.QPointF(10.0, 0.0))
+    deleted: bool = canvas.delete_selected_external_annotation()
+
+    assert canvas.external_annotations[0].points[0] == (10.0, 10.0)
+    assert deleted is False
+    assert canvas.external_annotation_handle_items == []
+
+
+def test_annotation_properties_persist_label_and_lock(qtbot, tmp_path: Path) -> None:
+    """Changing annotation properties should update the same LabelMe shape."""
+    image_path: Path = tmp_path / "IMG_5009.JPG"
+    image_path.write_bytes(b"")
+    _write_polygon_sidecar(image_path)
+    canvas: Canvas = Canvas()
+    canvas.directory = str(tmp_path)
+    canvas.current_image_name = image_path.name
+    canvas.display_external_annotations(str(image_path))
+    canvas.select_external_annotation(0)
+
+    updated: bool = canvas.update_selected_external_annotation_properties(
+        "review_boundary", True
+    )
+
+    assert updated is True
+    raw_data: dict[str, object] = json.loads(
+        image_path.with_suffix(".json").read_text(encoding="utf-8")
+    )
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], raw_data["shapes"]
+    )
+    assert shapes[0]["label"] == "review_boundary"
+    flags: dict[str, object] = cast(dict[str, object], shapes[0]["flags"])
+    assert flags["ddg_locked"] is True
+    assert canvas.external_annotations[0].locked is True

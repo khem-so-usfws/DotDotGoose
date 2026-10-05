@@ -62,6 +62,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     )
     external_annotation_delete_vertex_requested = QtCore.pyqtSignal(int, int)
     external_annotation_delete_requested = QtCore.pyqtSignal()
+    external_annotation_properties_requested = QtCore.pyqtSignal()
+    external_annotation_lock_requested = QtCore.pyqtSignal(bool)
     external_annotation_selection_cleared = QtCore.pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -84,6 +86,22 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
         self.setFocus()
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        """Clear cached modifier state when the view loses focus.
+
+        Modal dialogs can receive focus before key-release events return to the
+        graphics view. Clearing the cached state prevents a stale Ctrl or Shift
+        flag from leaking into later keyboard behavior. Mouse actions use the
+        modifiers attached to each mouse event directly.
+
+        Args:
+            event: Qt focus-out event.
+        """
+        self.ctrl = False
+        self.shift = False
+        self.alt = False
+        super().focusOutEvent(event)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         event.setAccepted(True)
@@ -113,6 +131,23 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.interaction_mode = InteractionMode.COUNT
         if was_selection_mode:
             self.external_annotation_selection_cleared.emit()
+        self.annotation_mode_changed.emit(self.interaction_mode.value)
+
+    def prepare_for_image_change(self) -> None:
+        """Release transient annotation graphics before the scene is cleared.
+
+        ``QGraphicsScene.clear()`` destroys the underlying C++ items.  Preview
+        item references therefore need to be released before the canvas clears
+        the scene during image navigation.
+        """
+        self._clear_line_preview()
+        self._clear_polygon_preview()
+        self.line_points = []
+        self.polygon_points = []
+        self.dragging_annotation_vertex = None
+        self.dragging_annotation_index = None
+        self.dragging_annotation_last_point = None
+        self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
     def reset_annotation_state(self, directory: str, file_name: str) -> None:
@@ -327,11 +362,13 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                     return
                 if item_kind == "ddg_external_annotation":
                     annotation_index: int = int(item.data(1))
+                    locked: bool = bool(item.data(4))
                     self.external_annotation_selected.emit(annotation_index)
-                    self.dragging_annotation_index = annotation_index
-                    self.dragging_annotation_last_point = self.mapToScene(
-                        event.position().toPoint()
-                    )
+                    if not locked:
+                        self.dragging_annotation_index = annotation_index
+                        self.dragging_annotation_last_point = self.mapToScene(
+                            event.position().toPoint()
+                        )
                     event.accept()
                     return
 
@@ -356,9 +393,26 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 self._add_polygon_vertex(self.mapToScene(event.position().toPoint()))
                 event.accept()
             return
-        if self.ctrl:
-            self.add_point.emit(self.mapToScene(event.pos()))
-        elif self.shift:
+        modifiers: QtCore.Qt.KeyboardModifier = event.modifiers()
+        ctrl_pressed: bool = bool(
+            modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+        )
+        shift_pressed: bool = bool(
+            modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier
+        )
+
+        if (
+            ctrl_pressed
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            self.add_point.emit(
+                self.mapToScene(event.position().toPoint())
+            )
+            event.accept()
+        elif (
+            shift_pressed
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
         else:
@@ -434,23 +488,45 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
 
         annotation_index = int(item.data(1))
         shape_type = str(item.data(3) or "")
+        locked: bool = bool(item.data(4))
         self.external_annotation_selected.emit(annotation_index)
-        insert_vertex_action: QtGui.QAction | None = None
-        if shape_type in {
-            AnnotationShape.LINE.value,
-            AnnotationShape.POLYGON.value,
-        }:
-            insert_vertex_action = menu.addAction(self.tr("Insert Vertex Here"))
-        delete_annotation_action: QtGui.QAction = menu.addAction(
-            self.tr("Delete Annotation")
+
+        properties_action: QtGui.QAction = menu.addAction(
+            self.tr("Annotation Properties...")
         )
+        lock_action: QtGui.QAction = menu.addAction(
+            self.tr("Unlock Annotation") if locked else self.tr("Lock Annotation")
+        )
+        menu.addSeparator()
+
+        insert_vertex_action: QtGui.QAction | None = None
+        delete_annotation_action: QtGui.QAction | None = None
+        if not locked:
+            if shape_type in {
+                AnnotationShape.LINE.value,
+                AnnotationShape.POLYGON.value,
+            }:
+                insert_vertex_action = menu.addAction(
+                    self.tr("Insert Vertex Here")
+                )
+            delete_annotation_action = menu.addAction(
+                self.tr("Delete Annotation")
+            )
+
         chosen_action = menu.exec(event.globalPos())
-        if insert_vertex_action is not None and chosen_action is insert_vertex_action:
+        if chosen_action is properties_action:
+            self.external_annotation_properties_requested.emit()
+        elif chosen_action is lock_action:
+            self.external_annotation_lock_requested.emit(not locked)
+        elif insert_vertex_action is not None and chosen_action is insert_vertex_action:
             scene_point: QtCore.QPointF = self.mapToScene(event.pos())
             self.external_annotation_insert_vertex_requested.emit(
                 annotation_index, scene_point
             )
-        elif chosen_action is delete_annotation_action:
+        elif (
+            delete_annotation_action is not None
+            and chosen_action is delete_annotation_action
+        ):
             self.external_annotation_delete_requested.emit()
 
 
@@ -464,12 +540,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self._update_line_preview(point)
 
     def _clear_line_preview(self) -> None:
-        """Remove the temporary in-progress cutline graphics item."""
-        if self.line_preview_item is not None:
-            scene: QtWidgets.QGraphicsScene | None = self.scene()
+        """Remove the temporary in-progress cutline graphics item safely."""
+        item: QtWidgets.QGraphicsPathItem | None = self.line_preview_item
+        self.line_preview_item = None
+        if item is None:
+            return
+        try:
+            scene: QtWidgets.QGraphicsScene | None = item.scene()
             if scene is not None:
-                scene.removeItem(self.line_preview_item)
-            self.line_preview_item = None
+                scene.removeItem(item)
+        except RuntimeError:
+            # The scene may already have deleted the C++ item.
+            pass
 
     def _update_line_preview(self, cursor_point: QtCore.QPointF) -> None:
         """Redraw the temporary cutline path through current vertices.
@@ -508,12 +590,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self._update_polygon_preview(point)
 
     def _clear_polygon_preview(self) -> None:
-        """Remove the temporary in-progress polygon graphics item."""
-        if self.polygon_preview_item is not None:
-            scene: QtWidgets.QGraphicsScene | None = self.scene()
+        """Remove the temporary in-progress polygon graphics item safely."""
+        item: QtWidgets.QGraphicsPathItem | None = self.polygon_preview_item
+        self.polygon_preview_item = None
+        if item is None:
+            return
+        try:
+            scene: QtWidgets.QGraphicsScene | None = item.scene()
             if scene is not None:
-                scene.removeItem(self.polygon_preview_item)
-            self.polygon_preview_item = None
+                scene.removeItem(item)
+        except RuntimeError:
+            # The scene may already have deleted the C++ item.
+            pass
 
     def _update_polygon_preview(self, cursor_point: QtCore.QPointF) -> None:
         """Redraw the temporary polygon path through current vertices.

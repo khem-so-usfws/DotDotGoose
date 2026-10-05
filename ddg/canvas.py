@@ -37,11 +37,16 @@ from .annotations import (
     Annotation,
     AnnotationShape,
     LabelMeDocument,
+    annotation_visibility_enabled,
     append_labelme_annotation,
     delete_labelme_annotation,
     load_annotation_style,
     load_labelme_document,
     load_labelme_raw_document,
+    count_region_polygons,
+    point_in_count_regions,
+    replace_labelme_annotations_by_label,
+    save_annotation_visibility,
     update_labelme_annotation,
     write_labelme_raw_document,
 )
@@ -50,6 +55,7 @@ from .annotations import (
 class Canvas(QtWidgets.QGraphicsScene):
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
     image_loaded = QtCore.pyqtSignal(str, str)  # Params (directory, image_name)
+    image_about_to_change = QtCore.pyqtSignal()
     points_loaded = QtCore.pyqtSignal(str)  # Params(survey_id)
     directory_set = QtCore.pyqtSignal(str)  # Params (directory)
     fields_updated = QtCore.pyqtSignal(list)
@@ -80,6 +86,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.image_cache = {'file_name': '', 'channels': 0, 'data': None}
         self.LUT = np.array([x for x in range(0, 256)], dtype=np.uint8)
         self.show_grid = True
+        self.show_points = True
 
         self.selected_pen = QtGui.QPen(QtGui.QBrush(QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern), 1)
         self.external_annotations: list[Annotation] = []
@@ -87,6 +94,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
         self.external_annotation_handle_items: list[QtWidgets.QGraphicsItem] = []
         self.selected_external_annotation_index: int | None = None
+        self.count_region_mask_item: QtWidgets.QGraphicsPathItem | None = None
 
     def add_class(self, class_name):
         if class_name not in self.classes:
@@ -103,14 +111,28 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def add_point(self, point):
         if self.current_image_name is not None and self.current_class_name is not None:
+            if (
+                self.point_is_outside_count_region(point)
+                and self.warn_outside_count_region_point_enabled()
+            ):
+                response = QtWidgets.QMessageBox.question(
+                    self.parent(),
+                    self.tr("Point Outside Count Region"),
+                    self.tr(
+                        "This bird point is outside the defined count region. "
+                        "Add it anyway?"
+                    ),
+                    QtWidgets.QMessageBox.StandardButton.Yes
+                    | QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No,
+                )
+                if response != QtWidgets.QMessageBox.StandardButton.Yes:
+                    return
+
             if self.current_class_name not in self.points[self.current_image_name]:
                 self.points[self.current_image_name][self.current_class_name] = []
-            display_radius = self.ui['point']['radius']
-            active_color = QtGui.QColor(self.ui['point']['color'][0], self.ui['point']['color'][1], self.ui['point']['color'][2])
-            active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
-            active_pen = QtGui.QPen(active_brush, 2)
             self.points[self.current_image_name][self.current_class_name].append(point)
-            self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+            self.display_points()
             self.update_point_count.emit(self.current_image_name, self.current_class_name, len(self.points[self.current_image_name][self.current_class_name]))
             self.dirty = True
             self.undo_queue.append(('add', self.current_class_name, point))
@@ -121,8 +143,13 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.removeItem(graphic)
 
     def clear_points(self):
-        for graphic in self.items():
-            if isinstance(graphic, QtWidgets.QGraphicsEllipseItem):
+        for graphic in list(self.items()):
+            item_kind: object = graphic.data(0)
+            if item_kind in {
+                "ddg_bird_point",
+                "ddg_count_region_warning",
+                "ddg_selected_bird_point",
+            }:
                 self.removeItem(graphic)
 
     def clear_queues(self):
@@ -262,6 +289,279 @@ class Canvas(QtWidgets.QGraphicsScene):
         self._render_external_annotation(
             annotation, len(self.external_annotations) - 1
         )
+        if annotation.label == "count_region":
+            self.refresh_count_region_mask()
+
+    def has_count_regions(self) -> bool:
+        """Return whether the active image has explicit count-region polygons.
+
+        Returns:
+            ``True`` when at least one polygon labeled ``count_region`` exists.
+        """
+        return bool(count_region_polygons(self.external_annotations))
+
+    def set_whole_image_count_region(self) -> bool:
+        """Replace active-image count regions with one whole-image polygon.
+
+        Returns:
+            ``True`` when the count region was written successfully.
+        """
+        if self.current_image_name is None:
+            return False
+
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if image_data is None or image_data.ndim < 2:
+            return False
+
+        image_height: int = int(image_data.shape[0])
+        image_width: int = int(image_data.shape[1])
+        annotation: Annotation = Annotation(
+            label="count_region",
+            shape_type=AnnotationShape.POLYGON,
+            points=[
+                (0.0, 0.0),
+                (float(image_width), 0.0),
+                (float(image_width), float(image_height)),
+                (0.0, float(image_height)),
+            ],
+        )
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        try:
+            replace_labelme_annotations_by_label(
+                image_path=image_path,
+                label="count_region",
+                annotations=[annotation],
+                image_width=image_width,
+                image_height=image_height,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The count region could not be saved.\n\n{}").format(error),
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=None,
+            after_selection_source_index=annotation.source_shape_index,
+        )
+        self.display_external_annotations(image_path)
+        return True
+
+    def count_region_qa(self) -> dict[str, Any]:
+        """Summarize active-image bird points inside and outside count regions.
+
+        Returns:
+            Dictionary containing ``has_regions``, total ``inside`` and
+            ``outside`` counts, and per-class counts.
+        """
+        regions = count_region_polygons(self.external_annotations)
+        result: dict[str, Any] = {
+            "has_regions": bool(regions),
+            "inside": 0,
+            "outside": 0,
+            "by_class": {},
+        }
+        if self.current_image_name is None or not regions:
+            return result
+
+        image_points: dict[str, list[QtCore.QPointF]] = self.points.get(
+            self.current_image_name, {}
+        )
+        for class_name, points in image_points.items():
+            inside_count: int = 0
+            outside_count: int = 0
+            for point in points:
+                if point_in_count_regions(
+                    (float(point.x()), float(point.y())), self.external_annotations
+                ):
+                    inside_count += 1
+                else:
+                    outside_count += 1
+            result["by_class"][class_name] = {
+                "inside": inside_count,
+                "outside": outside_count,
+            }
+            result["inside"] += inside_count
+            result["outside"] += outside_count
+        return result
+
+    def point_is_outside_count_region(self, point: QtCore.QPointF) -> bool:
+        """Return whether a bird point is outside an explicit count region.
+
+        Images without any explicit ``count_region`` polygon are treated as
+        unrestricted, so their bird points are never flagged as outside.
+
+        Args:
+            point: Bird point in source-image pixel coordinates.
+
+        Returns:
+            ``True`` only when count regions exist and ``point`` is outside
+            every count-region polygon.
+        """
+        if not self.has_count_regions():
+            return False
+        return not point_in_count_regions(
+            (float(point.x()), float(point.y())), self.external_annotations
+        )
+
+    def highlight_outside_count_region_points_enabled(self) -> bool:
+        """Return whether outside-region bird points should be highlighted."""
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/highlight_outside_points", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_highlight_outside_count_region_points(self, enabled: bool) -> None:
+        """Persist and apply outside-region bird-point highlighting.
+
+        Args:
+            enabled: Whether outside-region points should receive a warning ring.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue(
+            "annotations/count_region/highlight_outside_points", enabled
+        )
+        self.display_points()
+
+    def warn_outside_count_region_point_enabled(self) -> bool:
+        """Return whether DDG should warn before adding an outside point."""
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/warn_outside_point", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_warn_outside_count_region_point(self, enabled: bool) -> None:
+        """Persist the warning preference for new outside-region points.
+
+        Args:
+            enabled: Whether point placement should ask for confirmation.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue("annotations/count_region/warn_outside_point", enabled)
+
+    def dim_outside_count_region_enabled(self) -> bool:
+        """Return the persisted outside-region dimming preference.
+
+        Returns:
+            Whether the mask should be displayed.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/dim_outside", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_dim_outside_count_region(self, enabled: bool) -> None:
+        """Persist and apply the outside-count-region dimming preference.
+
+        Args:
+            enabled: Whether dimming should be displayed.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue("annotations/count_region/dim_outside", enabled)
+        self.refresh_count_region_mask()
+
+    def annotation_type_visible(self, shape_type: AnnotationShape) -> bool:
+        """Return whether one native annotation geometry type is visible.
+
+        Args:
+            shape_type: Geometry type to query.
+
+        Returns:
+            Persisted visibility state.
+        """
+        return annotation_visibility_enabled(shape_type)
+
+    def set_annotation_type_visible(
+        self,
+        shape_type: AnnotationShape,
+        visible: bool,
+    ) -> None:
+        """Persist and apply visibility for one annotation geometry type.
+
+        Args:
+            shape_type: Geometry type to show or hide.
+            visible: Whether it should be rendered.
+        """
+        save_annotation_visibility(shape_type, visible)
+        selected_index: int | None = self.selected_external_annotation_index
+        if (
+            not visible
+            and selected_index is not None
+            and 0 <= selected_index < len(self.external_annotations)
+            and self.external_annotations[selected_index].shape_type is shape_type
+        ):
+            self.selected_external_annotation_index = None
+        self._rerender_external_annotations()
+
+    def _clear_count_region_mask(self) -> None:
+        """Remove the current outside-region mask from the scene."""
+        if self.count_region_mask_item is None:
+            return
+        try:
+            if self.count_region_mask_item.scene() is self:
+                self.removeItem(self.count_region_mask_item)
+        except RuntimeError:
+            pass
+        self.count_region_mask_item = None
+
+    def refresh_count_region_mask(self) -> None:
+        """Render a translucent mask outside the union of count regions."""
+        self._clear_count_region_mask()
+        if not self.dim_outside_count_region_enabled():
+            return
+
+        regions = count_region_polygons(self.external_annotations)
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if not regions or image_data is None or image_data.ndim < 2:
+            return
+
+        image_height: float = float(image_data.shape[0])
+        image_width: float = float(image_data.shape[1])
+        valid_path: QtGui.QPainterPath = QtGui.QPainterPath()
+        for region in regions:
+            polygon = QtGui.QPolygonF(
+                [QtCore.QPointF(x, y) for x, y in region.points]
+            )
+            region_path: QtGui.QPainterPath = QtGui.QPainterPath()
+            region_path.addPolygon(polygon)
+            region_path.closeSubpath()
+            valid_path = valid_path.united(region_path)
+
+        image_path: QtGui.QPainterPath = QtGui.QPainterPath()
+        image_path.addRect(QtCore.QRectF(0.0, 0.0, image_width, image_height))
+        outside_path: QtGui.QPainterPath = image_path.subtracted(valid_path)
+        if outside_path.isEmpty():
+            return
+
+        mask_color: QtGui.QColor = QtGui.QColor(0, 0, 0, 90)
+        mask_pen: QtGui.QPen = QtGui.QPen(QtCore.Qt.PenStyle.NoPen)
+        mask_brush: QtGui.QBrush = QtGui.QBrush(mask_color)
+        item: QtWidgets.QGraphicsPathItem = self.addPath(
+            outside_path, mask_pen, mask_brush
+        )
+        item.setZValue(-5.0)
+        item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        self.count_region_mask_item = item
 
     def display_external_annotations(self, file_name: str) -> None:
         """Render supported LabelMe annotations for an image.
@@ -275,6 +575,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             file_name: Full path to the source image.
         """
         self._clear_external_annotation_graphics()
+        self._clear_count_region_mask()
         self.external_annotations = []
         self.external_annotation_document = None
         self.selected_external_annotation_index = None
@@ -292,6 +593,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         annotation: Annotation
         for annotation_index, annotation in enumerate(self.external_annotations):
             self._render_external_annotation(annotation, annotation_index)
+        self.refresh_count_region_mask()
+        self.display_points()
 
     def _render_external_annotation(
         self,
@@ -304,6 +607,9 @@ class Canvas(QtWidgets.QGraphicsScene):
             annotation: Annotation to render.
             annotation_index: Index in ``external_annotations``.
         """
+        if not self.annotation_type_visible(annotation.shape_type):
+            return
+
         style = load_annotation_style(annotation.shape_type)
         annotation_color: QtGui.QColor = QtGui.QColor(style.color)
         annotation_pen: QtGui.QPen = QtGui.QPen(annotation_color, style.width)
@@ -343,8 +649,12 @@ class Canvas(QtWidgets.QGraphicsScene):
             item.setData(0, "ddg_external_annotation")
             item.setData(1, annotation_index)
             item.setData(3, annotation.shape_type.value)
+            item.setData(4, annotation.locked)
             if annotation.label:
-                item.setToolTip(annotation.label)
+                tooltip: str = annotation.label
+                if annotation.locked:
+                    tooltip += self.tr(" (locked)")
+                item.setToolTip(tooltip)
             self.external_annotation_items.append(item)
 
     def _render_external_annotation_handles(self) -> None:
@@ -357,6 +667,8 @@ class Canvas(QtWidgets.QGraphicsScene):
             return
 
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked or not self.annotation_type_visible(annotation.shape_type):
+            return
         style = load_annotation_style(annotation.shape_type)
         color: QtGui.QColor = QtGui.QColor(style.color)
         pen: QtGui.QPen = QtGui.QPen(color, 2.0)
@@ -451,6 +763,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
             return
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return
         if vertex_index < 0 or vertex_index >= len(annotation.points):
             return
         annotation.points[vertex_index] = (point.x(), point.y())
@@ -473,6 +787,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
             return
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return
         annotation.points = [
             (x + delta.x(), y + delta.y()) for x, y in annotation.points
         ]
@@ -522,6 +838,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
             return False
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
         if annotation.shape_type is AnnotationShape.POINT:
             return False
 
@@ -553,6 +871,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
             return False
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
         if vertex_index < 0 or vertex_index >= len(annotation.points):
             return False
         minimum_vertices: int
@@ -584,6 +904,8 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
         source_shape_index: int | None = annotation.source_shape_index
         if source_shape_index is None:
             return False
@@ -686,6 +1008,100 @@ class Canvas(QtWidgets.QGraphicsScene):
             return None
         return best_segment, best_point
 
+    def selected_external_annotation(self) -> Annotation | None:
+        """Return the selected native annotation, if any.
+
+        Returns:
+            Selected annotation or ``None``.
+        """
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return None
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return None
+        return self.external_annotations[annotation_index]
+
+    def update_selected_external_annotation_properties(
+        self,
+        label: str,
+        locked: bool,
+    ) -> bool:
+        """Persist label and lock-state changes for the selected annotation.
+
+        Args:
+            label: New non-empty semantic label.
+            locked: Whether editing should be locked.
+
+        Returns:
+            ``True`` when the properties were saved successfully.
+        """
+        annotation: Annotation | None = self.selected_external_annotation()
+        if annotation is None or self.current_image_name is None:
+            return False
+        normalized_label: str = label.strip()
+        if not normalized_label:
+            return False
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return False
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        annotation.label = normalized_label
+        annotation.set_locked(locked)
+        try:
+            update_labelme_annotation(image_path, annotation)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The annotation properties could not be saved.\n\n{}").format(
+                    error
+                ),
+            )
+            self._reload_external_annotations_preserving_selection(
+                image_path, source_shape_index
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=source_shape_index,
+        )
+        self._reload_external_annotations_preserving_selection(
+            image_path, source_shape_index
+        )
+        return True
+
+    def set_selected_external_annotation_locked(self, locked: bool) -> bool:
+        """Persist the edit-lock state for the selected annotation.
+
+        Args:
+            locked: Whether editing should be locked.
+
+        Returns:
+            ``True`` when a selected annotation was saved successfully.
+        """
+        annotation: Annotation | None = self.selected_external_annotation()
+        if annotation is None:
+            return False
+        return self.update_selected_external_annotation_properties(
+            annotation.label, locked
+        )
+
     def delete_selected_external_annotation(self) -> bool:
         """Delete the currently selected native annotation from its sidecar.
 
@@ -701,6 +1117,8 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
         source_shape_index: int | None = annotation.source_shape_index
         if source_shape_index is None:
             return False
@@ -846,6 +1264,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         for annotation_index, annotation in enumerate(self.external_annotations):
             self._render_external_annotation(annotation, annotation_index)
         self._render_external_annotation_handles()
+        self.refresh_count_region_mask()
+        self.display_points()
 
     def refresh_external_annotation_styles(self) -> None:
         """Re-render current native annotations using configured symbology."""
@@ -866,10 +1286,59 @@ class Canvas(QtWidgets.QGraphicsScene):
                 line = QtCore.QLineF(0.0, y, rect.width(), y)
                 self.addLine(line, pen)
 
+    def _render_bird_point(
+        self,
+        point: QtCore.QPointF,
+        pen: QtGui.QPen,
+        brush: QtGui.QBrush,
+    ) -> None:
+        """Render one bird point and an optional outside-region warning ring.
+
+        Args:
+            point: Bird point in source-image pixel coordinates.
+            pen: Normal bird-point outline.
+            brush: Normal bird-point fill.
+        """
+        display_radius: float = float(self.ui['point']['radius'])
+        point_rect: QtCore.QRectF = QtCore.QRectF(
+            point.x() - ((display_radius - 1.0) / 2.0),
+            point.y() - ((display_radius - 1.0) / 2.0),
+            display_radius,
+            display_radius,
+        )
+        item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+            point_rect, pen, brush
+        )
+        item.setData(0, "ddg_bird_point")
+        item.setZValue(0.0)
+
+        if not self.highlight_outside_count_region_points_enabled():
+            return
+        if not self.point_is_outside_count_region(point):
+            return
+
+        warning_radius: float = display_radius + 10.0
+        warning_rect: QtCore.QRectF = QtCore.QRectF(
+            point.x() - ((warning_radius - 1.0) / 2.0),
+            point.y() - ((warning_radius - 1.0) / 2.0),
+            warning_radius,
+            warning_radius,
+        )
+        warning_pen: QtGui.QPen = QtGui.QPen(QtGui.QColor(255, 64, 64), 3.0)
+        warning_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+        warning_item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+            warning_rect, warning_pen
+        )
+        warning_item.setData(0, "ddg_count_region_warning")
+        warning_item.setToolTip(self.tr("Bird point is outside the count region"))
+        warning_item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        warning_item.setZValue(1.0)
+
     def display_points(self):
         self.clear_points()
+        if not self.show_points:
+            return
         if self.current_image_name in self.points:
-            display_radius = self.ui['point']['radius']
             active_color = QtGui.QColor(self.ui['point']['color'][0], self.ui['point']['color'][1], self.ui['point']['color'][2])
             active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
             active_pen = QtGui.QPen(active_brush, 2)
@@ -879,9 +1348,9 @@ class Canvas(QtWidgets.QGraphicsScene):
                 pen = QtGui.QPen(brush, 2)
                 for point in points:
                     if class_name == self.current_class_name:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+                        self._render_bird_point(point, active_pen, active_brush)
                     else:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), pen, brush)
+                        self._render_bird_point(point, pen, brush)
 
     def export_counts(self, file_name):
         if self.current_image_name is not None:
@@ -1027,6 +1496,19 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.directory_set.emit(self.directory)
             self.load_images(drop_list)
 
+    def _prepare_annotation_graphics_for_scene_clear(self) -> None:
+        """Release annotation graphics before ``QGraphicsScene.clear``.
+
+        Qt deletes the underlying C++ graphics items when a scene is cleared.
+        Explicitly removing DDG-owned annotation items first prevents stale
+        Python wrappers from surviving an image switch.
+        """
+        self._clear_count_region_mask()
+        self._clear_external_annotation_graphics()
+        self.external_annotations = []
+        self.external_annotation_document = None
+        self.selected_external_annotation_index = None
+
     def load_image(self, in_file_name, redraw=False):
         Image.MAX_IMAGE_PIXELS = 1000000000
         file_name = in_file_name
@@ -1040,6 +1522,10 @@ class Canvas(QtWidgets.QGraphicsScene):
         if self.directory == os.path.split(file_name)[0]:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
             self.selection = []
+            # Tear down transient/view-owned graphics while their C++ objects
+            # are still valid.  QGraphicsScene.clear() deletes all scene items.
+            self.image_about_to_change.emit()
+            self._prepare_annotation_graphics_for_scene_clear()
             self.clear()
             self.current_image_name = os.path.split(file_name)[1]
             if self.current_image_name not in self.points:
@@ -1067,6 +1553,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                         qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
+                        item.setZValue(-10.0)
                         item.moveBy(s, 0)
                     # Fix for windows, thin slivers at the end cause the app to hang. QImage bug?
                     if tail > 0:
@@ -1075,6 +1562,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                         qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
+                        item.setZValue(-10.0)
                         item.moveBy(max_stride, 0)
                 else:
                     self.image_loading.emit(False, redraw)
@@ -1088,7 +1576,8 @@ class Canvas(QtWidgets.QGraphicsScene):
                         else:
                             qt_image = QtGui.QImage(array.data, array.shape[1], array.shape[0], bpl, QtGui.QImage.Format.Format_RGB888)
                     self.pixmap = QtGui.QPixmap.fromImage(qt_image)
-                    self.addPixmap(self.pixmap)
+                    image_item: QtWidgets.QGraphicsPixmapItem = self.addPixmap(self.pixmap)
+                    image_item.setZValue(-10.0)
                 self.display_external_annotations(file_name)
                 self.display_grid()
                 self.display_points()
@@ -1259,6 +1748,9 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotations = []
         self.external_annotation_document = None
         self.external_annotation_items = []
+        self.external_annotation_handle_items = []
+        self.selected_external_annotation_index = None
+        self.count_region_mask_item = None
 
         self.clear()
         self.directory = ''
@@ -1335,7 +1827,17 @@ class Canvas(QtWidgets.QGraphicsScene):
             for point in current[class_name]:
                 if rect.contains(point):
                     offset = ((display_radius + 6) // 2)
-                    self.addEllipse(QtCore.QRectF(point.x() - offset, point.y() - offset, display_radius + 6, display_radius + 6), self.selected_pen)
+                    selected_item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+                        QtCore.QRectF(
+                            point.x() - offset,
+                            point.y() - offset,
+                            display_radius + 6,
+                            display_radius + 6,
+                        ),
+                        self.selected_pen,
+                    )
+                    selected_item.setData(0, "ddg_selected_bird_point")
+                    selected_item.setZValue(1.5)
                     self.selection.append((class_name, point))
 
     def set_current_class(self, class_index):
@@ -1370,6 +1872,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.clear_grid()
 
     def toggle_points(self, display):
+        self.show_points = bool(display)
         if display:
             self.display_points()
             self.selection = []

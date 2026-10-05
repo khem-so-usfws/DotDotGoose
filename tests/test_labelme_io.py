@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from ddg.annotations import (
     Annotation,
     AnnotationShape,
@@ -353,3 +355,185 @@ def test_raw_document_history_round_trip(tmp_path: Path) -> None:
 
     write_labelme_raw_document(image_path, None)
     assert load_labelme_raw_document(image_path) is None
+
+
+def test_replace_annotations_by_label_preserves_other_shapes(tmp_path: Path) -> None:
+    """Replacing count regions should preserve unrelated LabelMe shapes."""
+    from ddg.annotations import (
+        Annotation,
+        AnnotationShape,
+        replace_labelme_annotations_by_label,
+    )
+
+    image_path: Path = tmp_path / "IMG_6000.JPG"
+    image_path.write_bytes(b"")
+    raw_data: dict[str, object] = {
+        "version": "5.0.1",
+        "flags": {"keep": True},
+        "shapes": [
+            {
+                "label": "landmark",
+                "points": [[5, 5]],
+                "group_id": None,
+                "shape_type": "point",
+                "flags": {"keep": True},
+            },
+            {
+                "label": "count_region",
+                "points": [[0, 0], [10, 0], [10, 10]],
+                "group_id": None,
+                "shape_type": "polygon",
+                "flags": {},
+            },
+        ],
+        "imagePath": image_path.name,
+        "imageData": None,
+        "imageHeight": 100,
+        "imageWidth": 200,
+    }
+    image_path.with_suffix(".json").write_text(
+        json.dumps(raw_data), encoding="utf-8"
+    )
+    replacement = Annotation(
+        label="count_region",
+        shape_type=AnnotationShape.POLYGON,
+        points=[(0.0, 0.0), (200.0, 0.0), (200.0, 100.0), (0.0, 100.0)],
+    )
+
+    replace_labelme_annotations_by_label(
+        image_path=image_path,
+        label="count_region",
+        annotations=[replacement],
+    )
+
+    saved: dict[str, object] = json.loads(
+        image_path.with_suffix(".json").read_text(encoding="utf-8")
+    )
+    shapes = cast(list[dict[str, object]], saved["shapes"])
+    assert [shape["label"] for shape in shapes] == ["landmark", "count_region"]
+    assert shapes[0]["flags"] == {"keep": True}
+    assert saved["flags"] == {"keep": True}
+    assert replacement.source_shape_index == 1
+
+
+def test_annotation_update_creates_rolling_backup(tmp_path: Path) -> None:
+    """Saving over an existing sidecar should preserve the prior JSON."""
+    from ddg.annotations import update_labelme_annotation
+
+    image_path: Path = tmp_path / "IMG_7000.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    original: dict[str, object] = {
+        "customMetadata": {"version": 1},
+        "shapes": [
+            {
+                "label": "landmark",
+                "points": [[10, 20]],
+                "group_id": None,
+                "shape_type": "point",
+                "flags": {},
+            }
+        ],
+    }
+    json_path.write_text(json.dumps(original), encoding="utf-8")
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+    assert document is not None
+    annotation: Annotation = document.annotations[0]
+    annotation.points[0] = (30.0, 40.0)
+
+    update_labelme_annotation(image_path, annotation)
+
+    backup_path: Path = json_path.with_name(f"{json_path.name}.bak")
+    assert backup_path.exists()
+    assert json.loads(backup_path.read_text(encoding="utf-8")) == original
+    saved: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
+    assert shapes[0]["points"] == [[30.0, 40.0]]
+
+
+def test_atomic_replace_failure_preserves_live_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed final replace must leave the live LabelMe file untouched."""
+    import ddg.annotations.labelme_io as labelme_io
+    from ddg.annotations import update_labelme_annotation
+
+    image_path: Path = tmp_path / "IMG_7001.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    original_text: str = json.dumps(
+        {
+            "customMetadata": "original",
+            "shapes": [
+                {
+                    "label": "landmark",
+                    "points": [[1, 2]],
+                    "group_id": None,
+                    "shape_type": "point",
+                    "flags": {},
+                }
+            ],
+        },
+        indent=2,
+    )
+    json_path.write_text(original_text, encoding="utf-8")
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+    assert document is not None
+    annotation: Annotation = document.annotations[0]
+    annotation.points[0] = (99.0, 100.0)
+
+    def fail_replace(source: object, destination: object) -> None:
+        """Simulate a filesystem failure during the atomic swap."""
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(labelme_io.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        update_labelme_annotation(image_path, annotation)
+
+    assert json_path.read_text(encoding="utf-8") == original_text
+    backup_path: Path = json_path.with_name(f"{json_path.name}.bak")
+    assert backup_path.exists()
+    assert backup_path.read_text(encoding="utf-8") == original_text
+    temporary_files: list[Path] = list(tmp_path.glob(f".{json_path.name}.*.tmp"))
+    assert temporary_files == []
+
+
+def test_malformed_sidecar_is_not_overwritten_when_appending(tmp_path: Path) -> None:
+    """Malformed existing JSON should fail safely without modifying the file."""
+    image_path: Path = tmp_path / "IMG_7002.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    malformed_text: str = '{"shapes": ['
+    json_path.write_text(malformed_text, encoding="utf-8")
+    annotation: Annotation = Annotation(
+        label="count_region",
+        shape_type=AnnotationShape.POLYGON,
+        points=[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)],
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        append_labelme_annotation(image_path, annotation)
+
+    assert json_path.read_text(encoding="utf-8") == malformed_text
+    assert not json_path.with_name(f"{json_path.name}.bak").exists()
+
+
+def test_removing_sidecar_keeps_last_live_copy_as_backup(tmp_path: Path) -> None:
+    """History removal should preserve the deleted sidecar as a backup."""
+    from ddg.annotations import write_labelme_raw_document
+
+    image_path: Path = tmp_path / "IMG_7003.JPG"
+    raw_data: dict[str, object] = {
+        "customMetadata": {"observer": "example"},
+        "shapes": [],
+    }
+    write_labelme_raw_document(image_path, raw_data)
+    json_path: Path = image_path.with_suffix(".json")
+    assert json_path.exists()
+
+    write_labelme_raw_document(image_path, None)
+
+    backup_path: Path = json_path.with_name(f"{json_path.name}.bak")
+    assert not json_path.exists()
+    assert json.loads(backup_path.read_text(encoding="utf-8")) == raw_data
