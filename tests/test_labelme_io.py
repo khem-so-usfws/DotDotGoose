@@ -195,17 +195,17 @@ def test_append_annotation_preserves_existing_labelme_content(tmp_path: Path) ->
     assert shapes[1]["shape_type"] == "polygon"
 
 
-def test_append_line_and_point_annotations(tmp_path) -> None:
+def test_append_line_and_point_annotations(tmp_path: Path) -> None:
     """Line and point annotations should serialize with LabelMe shape types."""
-    image_path = tmp_path / "IMG_2000.JPG"
+    image_path: Path = tmp_path / "IMG_2000.JPG"
     image_path.write_bytes(b"")
 
-    line = Annotation(
+    line: Annotation = Annotation(
         label="cutline",
         shape_type=AnnotationShape.LINE,
         points=[(1.0, 2.0), (3.0, 4.0)],
     )
-    point = Annotation(
+    point: Annotation = Annotation(
         label="landmark",
         shape_type=AnnotationShape.POINT,
         points=[(5.0, 6.0)],
@@ -213,7 +213,7 @@ def test_append_line_and_point_annotations(tmp_path) -> None:
     append_labelme_annotation(image_path, line)
     append_labelme_annotation(image_path, point)
 
-    document = load_labelme_document(image_path)
+    document: LabelMeDocument | None = load_labelme_document(image_path)
     assert document is not None
     assert [annotation.shape_type for annotation in document.annotations] == [
         AnnotationShape.LINE,
@@ -394,7 +394,7 @@ def test_replace_annotations_by_label_preserves_other_shapes(tmp_path: Path) -> 
     image_path.with_suffix(".json").write_text(
         json.dumps(raw_data), encoding="utf-8"
     )
-    replacement = Annotation(
+    replacement: Annotation = Annotation(
         label="count_region",
         shape_type=AnnotationShape.POLYGON,
         points=[(0.0, 0.0), (200.0, 0.0), (200.0, 100.0), (0.0, 100.0)],
@@ -409,7 +409,9 @@ def test_replace_annotations_by_label_preserves_other_shapes(tmp_path: Path) -> 
     saved: dict[str, object] = json.loads(
         image_path.with_suffix(".json").read_text(encoding="utf-8")
     )
-    shapes = cast(list[dict[str, object]], saved["shapes"])
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
     assert [shape["label"] for shape in shapes] == ["landmark", "count_region"]
     assert shapes[0]["flags"] == {"keep": True}
     assert saved["flags"] == {"keep": True}

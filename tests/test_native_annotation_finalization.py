@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ddg.main_window import MainWindow
 
 
-def test_count_mode_status_uses_generic_point_wording(qtbot) -> None:
+def test_count_mode_status_uses_generic_point_wording(qtbot: Any) -> None:
     """The count-mode reminder should describe generic DDG points."""
     window: MainWindow = MainWindow()
     qtbot.addWidget(window)

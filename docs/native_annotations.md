@@ -52,7 +52,7 @@ Choose **Annotations > Select/Edit Annotation**.
 - Right-click a line or polygon to insert a vertex on the nearest segment.
 - Right-click a vertex to delete it when the remaining geometry stays valid.
 - Press **Delete** to remove an unlocked selected annotation.
-- Use **Ctrl+Z** and **Ctrl+Y** for undo and redo.
+- Use **Ctrl+Z** and **Ctrl+Y** for undo and redo. When Compare is open, history is chronological across Current and Reference rather than tied to the active pane.
 
 Locked annotations remain selectable for inspection but cannot be moved, reshaped, or deleted until unlocked.
 

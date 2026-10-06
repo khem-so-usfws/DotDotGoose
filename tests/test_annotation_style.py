@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6 import QtCore
 
 from ddg.annotations import (
@@ -14,9 +16,9 @@ from ddg.annotations import (
 )
 
 
-def test_annotation_style_round_trip(tmp_path) -> None:
+def test_annotation_style_round_trip(tmp_path: Path) -> None:
     """Saved color and weight should load from an isolated QSettings file."""
-    settings_path = tmp_path / "ddg-test.ini"
+    settings_path: Path = tmp_path / "ddg-test.ini"
     settings: QtCore.QSettings = QtCore.QSettings(
         str(settings_path), QtCore.QSettings.Format.IniFormat
     )
@@ -29,9 +31,9 @@ def test_annotation_style_round_trip(tmp_path) -> None:
     assert actual == expected
 
 
-def test_invalid_stored_style_falls_back_to_defaults(tmp_path) -> None:
+def test_invalid_stored_style_falls_back_to_defaults(tmp_path: Path) -> None:
     """Malformed persisted values should not break annotation rendering."""
-    settings_path = tmp_path / "ddg-test.ini"
+    settings_path: Path = tmp_path / "ddg-test.ini"
     settings: QtCore.QSettings = QtCore.QSettings(
         str(settings_path), QtCore.QSettings.Format.IniFormat
     )
@@ -46,9 +48,9 @@ def test_invalid_stored_style_falls_back_to_defaults(tmp_path) -> None:
     assert style.width == 4.0
 
 
-def test_annotation_visibility_round_trip(tmp_path) -> None:
+def test_annotation_visibility_round_trip(tmp_path: Path) -> None:
     """Per-type visibility should persist independently of annotation JSON."""
-    settings_path = tmp_path / "ddg-visibility-test.ini"
+    settings_path: Path = tmp_path / "ddg-visibility-test.ini"
     settings: QtCore.QSettings = QtCore.QSettings(
         str(settings_path), QtCore.QSettings.Format.IniFormat
     )
@@ -60,9 +62,9 @@ def test_annotation_visibility_round_trip(tmp_path) -> None:
     assert annotation_visibility_enabled(AnnotationShape.POINT, settings) is True
 
 
-def test_nonfinite_stored_width_falls_back_to_default(tmp_path) -> None:
+def test_nonfinite_stored_width_falls_back_to_default(tmp_path: Path) -> None:
     """NaN/Infinity in settings must not reach QPen construction."""
-    settings_path = tmp_path / "ddg-nonfinite-style-test.ini"
+    settings_path: Path = tmp_path / "ddg-nonfinite-style-test.ini"
     settings: QtCore.QSettings = QtCore.QSettings(
         str(settings_path), QtCore.QSettings.Format.IniFormat
     )

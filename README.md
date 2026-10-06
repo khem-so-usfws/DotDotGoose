@@ -32,3 +32,10 @@ python3 main.py
 ## Executables
 
 Don't want to install from scratch? [Download DotDotGoose and start counting!](https://biodiversityinformatics.amnh.org/open_source/dotdotgoose/)
+
+## Contributors
+
+- Ido Senesh — https://github.com/idoadse
+- Julie Young — https://github.com/julieyoung6
+- Ștefan Istrate — https://github.com/stefanistrate
+- Khem So — https://github.com/khem-so-usfws

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg import Canvas
@@ -22,7 +24,7 @@ def _count_region() -> Annotation:
     )
 
 
-def test_point_outside_count_region_requires_explicit_region(qtbot) -> None:
+def test_point_outside_count_region_requires_explicit_region(qtbot: Any) -> None:
     """Images without a count region should not flag ordinary bird points."""
     canvas: Canvas = Canvas()
 
@@ -34,7 +36,7 @@ def test_point_outside_count_region_requires_explicit_region(qtbot) -> None:
     assert canvas.point_is_outside_count_region(QtCore.QPointF(150.0, 50.0)) is True
 
 
-def test_display_points_marks_only_outside_points(qtbot, monkeypatch) -> None:
+def test_display_points_marks_only_outside_points(qtbot: Any, monkeypatch: Any) -> None:
     """Outside bird points should receive a distinct warning-ring graphic."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_8000.JPG"
@@ -62,7 +64,9 @@ def test_display_points_marks_only_outside_points(qtbot, monkeypatch) -> None:
     assert item_kinds.count("ddg_count_region_warning") == 1
 
 
-def test_outside_point_warning_can_reject_placement(qtbot, monkeypatch) -> None:
+def test_outside_point_warning_can_reject_placement(
+    qtbot: Any, monkeypatch: Any
+) -> None:
     """Rejecting the warning dialog should leave DDG point data unchanged."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_8001.JPG"
@@ -86,7 +90,7 @@ def test_outside_point_warning_can_reject_placement(qtbot, monkeypatch) -> None:
     assert canvas.dirty is False
 
 
-def test_outside_point_warning_can_be_disabled(qtbot, monkeypatch) -> None:
+def test_outside_point_warning_can_be_disabled(qtbot: Any, monkeypatch: Any) -> None:
     """Disabling the warning should allow outside points without prompting."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_8002.JPG"
@@ -113,7 +117,9 @@ def test_outside_point_warning_can_be_disabled(qtbot, monkeypatch) -> None:
     assert canvas.dirty is True
 
 
-def test_display_points_reads_highlight_preference_once(qtbot, monkeypatch) -> None:
+def test_display_points_reads_highlight_preference_once(
+    qtbot: Any, monkeypatch: Any
+) -> None:
     """One redraw should not query persistent settings once per point."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_8003.JPG"
@@ -128,6 +134,7 @@ def test_display_points_reads_highlight_preference_once(qtbot, monkeypatch) -> N
     calls: list[bool] = []
 
     def highlight_enabled() -> bool:
+        """Record one preference lookup and return the enabled state."""
         calls.append(True)
         return True
 

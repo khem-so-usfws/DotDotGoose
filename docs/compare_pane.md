@@ -18,7 +18,9 @@ Use **View > Compare Layout**:
 - **1×2 Side by Side** — Current and Reference are arranged horizontally.
 - **2×1 Stacked** — Current is above Reference.
 
-Changing layouts does not change either selected image.
+The fresh/default layout is **1×2 Side by Side**. DDG remembers an explicit
+layout choice, so a previously saved 2×1 preference remains in effect after an
+upgrade. Changing layouts does not change either selected image.
 
 ## Current image
 
@@ -47,10 +49,18 @@ Reference. Navigation and native annotation editing remain available.
 
 ## Native annotations
 
-Landmark, cutline, count-region, selection/editing, locking, properties, and
-annotation undo/redo can operate on either displayed image. Click or move the
-mouse into the desired image pane before invoking the annotation command. The
-most recently focused pane receives the command.
+Landmark, cutline, and count-region drawing can operate on either displayed
+image without pre-activating a pane. Choose the drawing command, then click
+directly in Current or Reference. That first image click both chooses the target
+pane and places the landmark or first line/polygon vertex.
+
+Selection/editing, locking, and properties remain targeted to the most recently
+clicked pane because those commands act on an existing annotation rather than
+starting new geometry.
+
+Ctrl+Z and Ctrl+Y use one chronological history across Current and Reference.
+Undo therefore reverses the most recent edit regardless of which pane is active;
+redo follows the same cross-pane chronology.
 
 Annotations remain stored against their original source image in its existing
 LabelMe-compatible sidecar. Compare creates no mosaic or transformed image.
@@ -61,6 +71,3 @@ Only Current and the one visible Reference image are decoded simultaneously.
 Other project images remain filenames only. When Compare is hidden, DDG releases
 the Reference scene and decoded image array while retaining the selected
 filename for the next Compare session.
-
-- Native annotations can be displayed and edited in either pane. Click an image pane before choosing an annotation command; the last-clicked pane remains the annotation target even while the pointer moves to the menu.
-- The divider between Current and Reference can be dragged close to either edge; comparison controls must not impose a large minimum pane size.

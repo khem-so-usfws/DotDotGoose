@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtWidgets
 
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 
 
-def test_finish_polygon_emits_completed_points(qtbot) -> None:
+def test_finish_polygon_emits_completed_points(qtbot: Any) -> None:
     """Finishing a valid polygon should emit its source-image vertices."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -31,7 +33,7 @@ def test_finish_polygon_emits_completed_points(qtbot) -> None:
     assert view.polygon_points == []
 
 
-def test_cancel_polygon_discards_transient_vertices(qtbot) -> None:
+def test_cancel_polygon_discards_transient_vertices(qtbot: Any) -> None:
     """Canceling polygon mode should discard unsaved transient geometry."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()

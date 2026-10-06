@@ -34,7 +34,7 @@ def _write_polygon_sidecar(image_path: Path) -> None:
     )
 
 
-def test_vertex_move_updates_labelme_geometry(qtbot, tmp_path: Path) -> None:
+def test_vertex_move_updates_labelme_geometry(qtbot: Any, tmp_path: Path) -> None:
     """Finishing a vertex drag should persist new source-image coordinates."""
     image_path: Path = tmp_path / "IMG_5000.JPG"
     image_path.write_bytes(b"")
@@ -59,7 +59,7 @@ def test_vertex_move_updates_labelme_geometry(qtbot, tmp_path: Path) -> None:
     assert canvas.selected_external_annotation_index == 0
 
 
-def test_delete_selected_annotation_updates_sidecar(qtbot, tmp_path: Path) -> None:
+def test_delete_selected_annotation_updates_sidecar(qtbot: Any, tmp_path: Path) -> None:
     """Deleting a selected native annotation should remove its LabelMe shape."""
     image_path: Path = tmp_path / "IMG_5001.JPG"
     image_path.write_bytes(b"")
@@ -104,7 +104,9 @@ def _write_four_vertex_polygon_sidecar(image_path: Path) -> None:
     )
 
 
-def test_whole_annotation_move_updates_labelme_geometry(qtbot, tmp_path: Path) -> None:
+def test_whole_annotation_move_updates_labelme_geometry(
+    qtbot: Any, tmp_path: Path
+) -> None:
     """Dragging an annotation body should translate every stored vertex."""
     image_path: Path = tmp_path / "IMG_5002.JPG"
     image_path.write_bytes(b"")
@@ -131,7 +133,9 @@ def test_whole_annotation_move_updates_labelme_geometry(qtbot, tmp_path: Path) -
     ]
 
 
-def test_insert_vertex_projects_to_nearest_polygon_edge(qtbot, tmp_path: Path) -> None:
+def test_insert_vertex_projects_to_nearest_polygon_edge(
+    qtbot: Any, tmp_path: Path
+) -> None:
     """Inserted vertices should land on the nearest existing edge."""
     image_path: Path = tmp_path / "IMG_5003.JPG"
     image_path.write_bytes(b"")
@@ -160,7 +164,7 @@ def test_insert_vertex_projects_to_nearest_polygon_edge(qtbot, tmp_path: Path) -
     ]
 
 
-def test_delete_vertex_preserves_valid_polygon(qtbot, tmp_path: Path) -> None:
+def test_delete_vertex_preserves_valid_polygon(qtbot: Any, tmp_path: Path) -> None:
     """A polygon vertex may be deleted while at least three remain."""
     image_path: Path = tmp_path / "IMG_5004.JPG"
     image_path.write_bytes(b"")
@@ -186,7 +190,7 @@ def test_delete_vertex_preserves_valid_polygon(qtbot, tmp_path: Path) -> None:
     ]
 
 
-def test_delete_vertex_refuses_invalid_polygon(qtbot, tmp_path: Path) -> None:
+def test_delete_vertex_refuses_invalid_polygon(qtbot: Any, tmp_path: Path) -> None:
     """A triangle must retain all three vertices."""
     image_path: Path = tmp_path / "IMG_5005.JPG"
     image_path.write_bytes(b"")
@@ -206,7 +210,9 @@ def test_delete_vertex_refuses_invalid_polygon(qtbot, tmp_path: Path) -> None:
     ]
 
 
-def test_annotation_edit_undo_and_redo_restore_sidecar(qtbot, tmp_path: Path) -> None:
+def test_annotation_edit_undo_and_redo_restore_sidecar(
+    qtbot: Any, tmp_path: Path
+) -> None:
     """DDG's existing undo/redo shortcuts should restore annotation documents."""
     image_path: Path = tmp_path / "IMG_5006.JPG"
     image_path.write_bytes(b"")
@@ -227,7 +233,9 @@ def test_annotation_edit_undo_and_redo_restore_sidecar(qtbot, tmp_path: Path) ->
     assert canvas.external_annotations[0].points[0] == (20.0, 10.0)
 
 
-def test_annotation_creation_can_be_undone_and_redone(qtbot, tmp_path: Path) -> None:
+def test_annotation_creation_can_be_undone_and_redone(
+    qtbot: Any, tmp_path: Path
+) -> None:
     """Creating the first sidecar annotation should be reversible."""
     image_path: Path = tmp_path / "IMG_5007.JPG"
     image_path.write_bytes(b"")
@@ -248,7 +256,7 @@ def test_annotation_creation_can_be_undone_and_redone(qtbot, tmp_path: Path) -> 
     assert canvas.external_annotations[0].points == [(12.0, 34.0)]
 
 
-def test_locked_annotation_refuses_geometry_edit(qtbot, tmp_path: Path) -> None:
+def test_locked_annotation_refuses_geometry_edit(qtbot: Any, tmp_path: Path) -> None:
     """Locked annotations should not move or delete until explicitly unlocked."""
     image_path: Path = tmp_path / "IMG_5008.JPG"
     image_path.write_bytes(b"")
@@ -280,7 +288,9 @@ def test_locked_annotation_refuses_geometry_edit(qtbot, tmp_path: Path) -> None:
     assert canvas.external_annotation_handle_items == []
 
 
-def test_annotation_properties_persist_label_and_lock(qtbot, tmp_path: Path) -> None:
+def test_annotation_properties_persist_label_and_lock(
+    qtbot: Any, tmp_path: Path
+) -> None:
     """Changing annotation properties should update the same LabelMe shape."""
     image_path: Path = tmp_path / "IMG_5009.JPG"
     image_path.write_bytes(b"")
@@ -309,7 +319,7 @@ def test_annotation_properties_persist_label_and_lock(qtbot, tmp_path: Path) -> 
 
 
 def test_new_count_region_refreshes_existing_point_warnings(
-    qtbot, tmp_path: Path, monkeypatch
+    qtbot: Any, tmp_path: Path, monkeypatch: Any
 ) -> None:
     """Creating a count region should immediately redraw point QA graphics."""
     canvas: Canvas = Canvas()
@@ -331,7 +341,7 @@ def test_new_count_region_refreshes_existing_point_warnings(
 
 
 def test_annotation_history_snapshot_omits_embedded_image_data(
-    qtbot, tmp_path: Path
+    qtbot: Any, tmp_path: Path
 ) -> None:
     """Undo history should not retain a base64 image copy for every edit."""
     image_path: Path = tmp_path / "IMG_8200.JPG"
@@ -363,7 +373,7 @@ def test_annotation_history_snapshot_omits_embedded_image_data(
 
 
 def test_annotation_history_restore_preserves_live_embedded_image_data(
-    qtbot, tmp_path: Path
+    qtbot: Any, tmp_path: Path
 ) -> None:
     """Undo/redo restoration should keep LabelMe imageData unchanged."""
     image_path: Path = tmp_path / "IMG_8201.JPG"
@@ -403,7 +413,7 @@ def test_annotation_history_restore_preserves_live_embedded_image_data(
 
 
 def test_failed_annotation_history_restore_keeps_undo_event(
-    qtbot, tmp_path: Path, monkeypatch
+    qtbot: Any, tmp_path: Path, monkeypatch: Any
 ) -> None:
     """A failed undo write should remain available for a later retry."""
     image_path: Path = tmp_path / "IMG_8202.JPG"
@@ -432,7 +442,9 @@ def test_failed_annotation_history_restore_keeps_undo_event(
     assert len(canvas.redo_queue) == 0
 
 
-def test_landmark_rendering_uses_fixed_screen_size(qtbot, monkeypatch) -> None:
+def test_landmark_rendering_uses_fixed_screen_size(
+    qtbot: Any, monkeypatch: Any
+) -> None:
     """Landmark symbols and annotation stroke weights should not scale with zoom."""
     from ddg.annotations import Annotation
 
@@ -447,7 +459,7 @@ def test_landmark_rendering_uses_fixed_screen_size(qtbot, monkeypatch) -> None:
     canvas._render_external_annotation(annotation, 0)
 
     assert len(canvas.external_annotation_items) == 1
-    item = canvas.external_annotation_items[0]
+    item: QtWidgets.QGraphicsItem = canvas.external_annotation_items[0]
     assert bool(
         item.flags()
         & QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
@@ -455,7 +467,7 @@ def test_landmark_rendering_uses_fixed_screen_size(qtbot, monkeypatch) -> None:
     assert item.pen().isCosmetic() is True
 
 
-def test_unavailable_annotation_history_snapshot_is_not_recorded(qtbot) -> None:
+def test_unavailable_annotation_history_snapshot_is_not_recorded(qtbot: Any) -> None:
     """A snapshot read failure must not become a destructive undo event."""
     canvas: Canvas = Canvas()
     unavailable: dict[str, bool] = {
@@ -474,7 +486,7 @@ def test_unavailable_annotation_history_snapshot_is_not_recorded(qtbot) -> None:
 
 
 def test_annotation_history_read_failure_uses_unavailable_sentinel(
-    qtbot, monkeypatch
+    qtbot: Any, monkeypatch: Any
 ) -> None:
     """A sidecar read failure must differ from "no sidecar exists"."""
     canvas: Canvas = Canvas()

@@ -14,7 +14,7 @@ from ddg.annotations import Annotation, AnnotationShape
 
 
 def test_whole_image_count_region_replaces_only_count_regions(
-    qtbot, tmp_path: Path
+    qtbot: Any, tmp_path: Path
 ) -> None:
     """Whole-image mode should preserve unrelated annotations and metadata."""
     image_path: Path = tmp_path / "IMG_7000.JPG"
@@ -53,7 +53,9 @@ def test_whole_image_count_region_replaces_only_count_regions(
     updated: dict[str, object] = json.loads(
         image_path.with_suffix(".json").read_text(encoding="utf-8")
     )
-    shapes = cast(list[dict[str, object]], updated["shapes"])
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], updated["shapes"]
+    )
     assert [shape["label"] for shape in shapes] == ["landmark", "count_region"]
     assert shapes[1]["points"] == [
         [0.0, 0.0],
@@ -64,7 +66,7 @@ def test_whole_image_count_region_replaces_only_count_regions(
     assert updated["customMetadata"] == "keep"
 
 
-def test_count_region_qa_reports_inside_and_outside_by_class(qtbot) -> None:
+def test_count_region_qa_reports_inside_and_outside_by_class(qtbot: Any) -> None:
     """QA should classify bird points against the union of count regions."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_7001.JPG"
@@ -87,12 +89,14 @@ def test_count_region_qa_reports_inside_and_outside_by_class(qtbot) -> None:
     assert qa["has_regions"] is True
     assert qa["inside"] == 2
     assert qa["outside"] == 1
-    by_class = cast(dict[str, dict[str, int]], qa["by_class"])
+    by_class: dict[str, dict[str, int]] = cast(
+        dict[str, dict[str, int]], qa["by_class"]
+    )
     assert by_class["COMU"] == {"inside": 1, "outside": 1}
     assert by_class["WEGU"] == {"inside": 1, "outside": 0}
 
 
-def test_count_region_qa_reports_missing_region(qtbot) -> None:
+def test_count_region_qa_reports_missing_region(qtbot: Any) -> None:
     """QA should distinguish no explicit count region from zero bird points."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_7002.JPG"
@@ -106,7 +110,7 @@ def test_count_region_qa_reports_missing_region(qtbot) -> None:
 
 
 def test_refresh_count_region_mask_creates_noninteractive_overlay(
-    qtbot, monkeypatch
+    qtbot: Any, monkeypatch: Any
 ) -> None:
     """Dimming should create a mask above imagery but below DDG annotations."""
     canvas: Canvas = Canvas()

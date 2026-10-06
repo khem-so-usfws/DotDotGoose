@@ -8,7 +8,7 @@ from PyQt6 import QtCore, QtWidgets
 class CountRegionQADialog(QtWidgets.QDialog):
     """Display count-region QA results and navigate outside points."""
 
-    point_requested = QtCore.pyqtSignal(QtCore.QPointF)
+    point_requested: QtCore.pyqtSignal = QtCore.pyqtSignal(QtCore.QPointF)
 
     def __init__(
         self,

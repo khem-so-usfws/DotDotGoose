@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtGui
 
 from ddg import Canvas
 
 
-def test_point_undo_targets_original_image_after_navigation(qtbot, monkeypatch) -> None:
+def test_point_undo_targets_original_image_after_navigation(
+    qtbot: Any, monkeypatch: Any
+) -> None:
     """Undoing a point after switching images must modify its source image."""
     canvas: Canvas = Canvas()
     canvas.points = {"A.JPG": {}, "B.JPG": {}}

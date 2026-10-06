@@ -26,7 +26,7 @@ from enum import Enum
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from .annotations import AnnotationShape, load_annotation_style
+from .annotations import AnnotationShape, AnnotationStyle, load_annotation_style
 
 
 class InteractionMode(str, Enum):
@@ -56,34 +56,61 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     toggle_points = QtCore.pyqtSignal()
     toggle_grid = QtCore.pyqtSignal()
     switch_class = QtCore.pyqtSignal(int)
-    annotation_point_completed = QtCore.pyqtSignal(QtCore.QPointF)
-    line_completed = QtCore.pyqtSignal(list)
-    polygon_completed = QtCore.pyqtSignal(list)
-    annotation_mode_changed = QtCore.pyqtSignal(str)
-    external_annotation_selected = QtCore.pyqtSignal(int)
-    external_annotation_vertex_moved = QtCore.pyqtSignal(int, int, QtCore.QPointF)
-    external_annotation_vertex_move_finished = QtCore.pyqtSignal(int, int)
-    external_annotation_moved = QtCore.pyqtSignal(int, QtCore.QPointF)
-    external_annotation_move_finished = QtCore.pyqtSignal(int)
-    external_annotation_insert_vertex_requested = QtCore.pyqtSignal(
+    annotation_point_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(
+        QtCore.QPointF
+    )
+    line_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(list)
+    polygon_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(list)
+    annotation_mode_changed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
+    annotation_cancel_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    annotation_target_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    external_annotation_selected: QtCore.pyqtSignal = QtCore.pyqtSignal(int)
+    external_annotation_vertex_moved: QtCore.pyqtSignal = QtCore.pyqtSignal(
+        int, int, QtCore.QPointF
+    )
+    external_annotation_vertex_move_finished: QtCore.pyqtSignal = (
+        QtCore.pyqtSignal(int, int)
+    )
+    external_annotation_moved: QtCore.pyqtSignal = QtCore.pyqtSignal(
         int, QtCore.QPointF
     )
-    external_annotation_delete_vertex_requested = QtCore.pyqtSignal(int, int)
-    external_annotation_delete_requested = QtCore.pyqtSignal()
-    external_annotation_properties_requested = QtCore.pyqtSignal()
-    external_annotation_lock_requested = QtCore.pyqtSignal(bool)
-    external_annotation_selection_cleared = QtCore.pyqtSignal()
-    view_focused = QtCore.pyqtSignal()
-    view_activated = QtCore.pyqtSignal()
+    external_annotation_move_finished: QtCore.pyqtSignal = QtCore.pyqtSignal(
+        int
+    )
+    external_annotation_insert_vertex_requested: QtCore.pyqtSignal = (
+        QtCore.pyqtSignal(
+            int, QtCore.QPointF
+        )
+    )
+    external_annotation_delete_vertex_requested: QtCore.pyqtSignal = (
+        QtCore.pyqtSignal(int, int)
+    )
+    external_annotation_delete_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    external_annotation_properties_requested: QtCore.pyqtSignal = (
+        QtCore.pyqtSignal()
+    )
+    external_annotation_lock_requested: QtCore.pyqtSignal = QtCore.pyqtSignal(
+        bool
+    )
+    external_annotation_selection_cleared: QtCore.pyqtSignal = (
+        QtCore.pyqtSignal()
+    )
+    view_focused: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    view_activated: QtCore.pyqtSignal = QtCore.pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        """Initialize the interactive image view.
+
+        Args:
+            parent: Optional Qt parent widget.
+        """
         QtWidgets.QGraphicsView.__init__(self, parent)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
-        self.shift = False
-        self.ctrl = False
-        self.alt = False
-        self.delay = 0
+        self.shift: bool = False
+        self.ctrl: bool = False
+        self.alt: bool = False
+        self.delay: int = 0
         self.interaction_mode: InteractionMode = InteractionMode.COUNT
         self.line_points: list[QtCore.QPointF] = []
         self.line_preview_item: QtWidgets.QGraphicsPathItem | None = None
@@ -110,6 +137,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         )
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
+        """Give the image view keyboard focus when the pointer enters.
+
+        Args:
+            event: Qt enter event.
+        """
+        del event
         self.setFocus()
 
     def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
@@ -135,16 +168,38 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         super().focusOutEvent(event)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
+        """Accept image/file drag operations.
+
+        Args:
+            event: Qt drag-enter event.
+        """
         event.setAccepted(True)
 
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
-        pass
+        """Keep the existing accepted drag active while it moves.
+
+        Args:
+            event: Qt drag-move event.
+        """
+        del event
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:
+        """Emit dropped local URLs for the existing DDG loader.
+
+        Args:
+            event: Qt drop event.
+        """
         if len(event.mimeData().urls()) > 0:
             self.drop_complete.emit(event.mimeData().urls())
 
     def image_loaded(self, directory: str, file_name: str) -> None:
+        """Fit a newly loaded image into the viewport.
+
+        Args:
+            directory: Source image directory.
+            file_name: Loaded image basename.
+        """
+        del directory, file_name
         self.resetTransform()
         self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
         self.setSceneRect(self.scene().itemsBoundingRect())
@@ -528,6 +583,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self._cancel_pending_count_click()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Handle annotation commands and temporary navigation key presses.
+
+        Args:
+            event: Qt key-press event.
+        """
         if event.key() == QtCore.Qt.Key.Key_Escape:
             if self.navigation_gesture is not None:
                 # Cancel the temporary navigation gesture without discarding an
@@ -536,6 +596,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 self._cancel_navigation_gesture()
                 event.accept()
                 return
+            self.annotation_cancel_requested.emit()
             self.cancel_annotation()
             return
         if (
@@ -606,6 +667,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.switch_class.emit(9)
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Release cached modifiers and temporary navigation overrides.
+
+        Args:
+            event: Qt key-release event.
+        """
         navigation_override: NavigationOverride | None = (
             self._navigation_override_for_key(event.key())
         )
@@ -639,6 +705,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Route mouse movement to navigation, counting, or annotation edits.
+
+        Args:
+            event: Qt mouse-move event.
+        """
         if self._update_navigation_gesture(event):
             return
         if self._update_pending_count_click(event):
@@ -703,6 +774,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self._start_navigation_gesture(event, navigation_override)
             return
 
+        shift_pressed: bool = bool(
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        )
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and not shift_pressed
+        ):
+            # A Compare drawing tool can be armed before its target pane is
+            # known. This synchronous request lets the container assign the
+            # tool before this same click is interpreted as geometry.
+            self.annotation_target_requested.emit()
+
         if self.interaction_mode is InteractionMode.SELECT:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 item: QtWidgets.QGraphicsItem | None = self.itemAt(
@@ -760,9 +843,6 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 event.accept()
             return
 
-        shift_pressed: bool = bool(
-            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
-        )
         if (
             self.count_point_placement_enabled
             and shift_pressed
@@ -784,6 +864,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         QtWidgets.QGraphicsView.mousePressEvent(self, event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Finish the active navigation, count, selection, or edit gesture.
+
+        Args:
+            event: Qt mouse-release event.
+        """
         if self._finish_navigation_gesture(event):
             return
         if self._finish_pending_count_click(event):
@@ -946,7 +1031,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             path.lineTo(point)
         path.lineTo(cursor_point)
 
-        style = load_annotation_style(AnnotationShape.LINE)
+        style: AnnotationStyle = load_annotation_style(AnnotationShape.LINE)
         pen: QtGui.QPen = QtGui.QPen(
             QtGui.QColor(style.color),
             style.width,
@@ -999,7 +1084,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         if len(self.polygon_points) >= 2:
             path.lineTo(self.polygon_points[0])
 
-        style = load_annotation_style(AnnotationShape.POLYGON)
+        style: AnnotationStyle = load_annotation_style(AnnotationShape.POLYGON)
         pen: QtGui.QPen = QtGui.QPen(
             QtGui.QColor(style.color),
             style.width,
@@ -1012,28 +1097,43 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.polygon_preview_item.setZValue(10.0)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """Refit an unscrolled image after the viewport is resized.
+
+        Args:
+            event: Qt resize event.
+        """
+        del event
         self.resize_image()
 
     def resize_image(self) -> None:
-        vsb = self.verticalScrollBar().isVisible()
-        hsb = self.horizontalScrollBar().isVisible()
+        """Fit the scene when neither scrollbar is currently active."""
+        vsb: bool = self.verticalScrollBar().isVisible()
+        hsb: bool = self.horizontalScrollBar().isVisible()
         if not (vsb or hsb):
             self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
             self.setSceneRect(self.scene().itemsBoundingRect())
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        if len(self.scene().items()) > 0:
+        """Zoom the image incrementally with the mouse wheel.
+
+        Args:
+            event: Qt wheel event.
+        """
+        scene: QtWidgets.QGraphicsScene | None = self.scene()
+        if scene is not None and len(scene.items()) > 0:
             if event.angleDelta().y() > 0:
                 self.zoom_in()
             else:
                 self.zoom_out()
 
     def zoom_in(self) -> None:
+        """Increase the current view scale by one incremental step."""
         self.scale(1.1, 1.1)
         # Fix for MacOS and PyQt5 > v5.10
         self.repaint()
 
     def zoom_out(self) -> None:
+        """Decrease the current view scale by one incremental step."""
         self.scale(0.9, 0.9)
         # Fix for MacOS and PyQt5 > v5.10
         self.repaint()

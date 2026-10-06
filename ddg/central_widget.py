@@ -25,7 +25,8 @@
 import os
 import sys
 from typing import cast
-from PyQt6 import QtCore, QtWidgets, QtGui, uic
+
+from PyQt6 import QtCore, QtGui, QtWidgets, uic
 
 from ddg import Canvas
 from ddg import PointWidget
@@ -33,7 +34,7 @@ from ddg.fields import BoxText, LineText
 from ddg.annotation_properties_dialog import AnnotationPropertiesDialog
 from ddg.count_region_qa_dialog import CountRegionQADialog
 from ddg.annotations import Annotation, AnnotationShape
-from ddg.central_graphics_view import CentralGraphicsView
+from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 from ddg.compare_pane import ComparePane
 
 # from .ui_central_widget import Ui_central as CLASS_DIALOG
@@ -47,15 +48,21 @@ CLASS_DIALOG, _ = uic.loadUiType(os.path.join(bundle_dir, 'central_widget.ui'))
 class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     load_custom_data = QtCore.pyqtSignal(dict)
-    compare_enabled_changed = QtCore.pyqtSignal(bool)
-    compare_layout_changed = QtCore.pyqtSignal(str)
+    compare_enabled_changed: QtCore.pyqtSignal = QtCore.pyqtSignal(bool)
+    compare_layout_changed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
+    annotation_tool_armed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent=None):
-        QtWidgets.QDialog.__init__(self)
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        """Initialize the DDG central workspace and optional Compare pane.
+
+        Args:
+            parent: Optional Qt parent widget.
+        """
+        QtWidgets.QDialog.__init__(self, parent)
         self.setupUi(self)
-        self.canvas = Canvas(self)
+        self.canvas: Canvas = Canvas(self)
 
-        self.point_widget = PointWidget(self.canvas, self)
+        self.point_widget: PointWidget = PointWidget(self.canvas, self)
         self.findChild(QtWidgets.QFrame, 'framePointWidget').layout().addWidget(self.point_widget)
         self.point_widget.hide_custom_fields.connect(self.hide_custom_fields)
         self.canvas.saving.connect(self.display_quick_save)
@@ -69,11 +76,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         # Undo Redo shortcuts
         self.save_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.Key.Key_Z), self)
         self.save_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.save_shortcut.activated.connect(self.undo_active_viewer)
+        self.save_shortcut.activated.connect(self.undo_global_history)
 
         self.save_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.KeyboardModifier.ControlModifier | QtCore.Qt.Key.Key_Y), self)
         self.save_shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.save_shortcut.activated.connect(self.redo_active_viewer)
+        self.save_shortcut.activated.connect(self.redo_global_history)
 
         # Arrow short cuts to move among images
         self.up_arrow = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Up), self)
@@ -156,6 +163,21 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_canvas: Canvas = Canvas(self)
         self.reference_canvas.show_grid = False
         self.reference_canvas.show_points = False
+        # Coordinate undo/redo chronologically across Current and Reference.
+        self._global_undo_order: list[Canvas] = []
+        self._global_redo_order: list[Canvas] = []
+        self.canvas.history_recorded.connect(
+            lambda: self._record_global_history(self.canvas)
+        )
+        self.reference_canvas.history_recorded.connect(
+            lambda: self._record_global_history(self.reference_canvas)
+        )
+        self.canvas.history_cleared.connect(
+            lambda: self._remove_canvas_from_global_history(self.canvas)
+        )
+        self.reference_canvas.history_cleared.connect(
+            lambda: self._remove_canvas_from_global_history(self.reference_canvas)
+        )
         self.compare_pane: ComparePane = ComparePane(self.frameCenter)
         self.reference_graphics_view: CentralGraphicsView = (
             self.compare_pane.graphics_view
@@ -163,11 +185,28 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_graphics_view.set_count_point_placement_enabled(False)
         self.reference_graphics_view.setScene(self.reference_canvas)
         self._last_active_view_name: str = "current"
+        self._pending_compare_annotation_mode: InteractionMode | None = None
         self.graphicsView.view_activated.connect(
             lambda: self._set_last_active_view("current")
         )
         self.reference_graphics_view.view_activated.connect(
             lambda: self._set_last_active_view("reference")
+        )
+        self.graphicsView.annotation_target_requested.connect(
+            lambda: self._claim_pending_compare_annotation_tool(
+                "current", self.graphicsView
+            )
+        )
+        self.reference_graphics_view.annotation_target_requested.connect(
+            lambda: self._claim_pending_compare_annotation_tool(
+                "reference", self.reference_graphics_view
+            )
+        )
+        self.graphicsView.annotation_cancel_requested.connect(
+            self._clear_pending_compare_annotation_tool
+        )
+        self.reference_graphics_view.annotation_cancel_requested.connect(
+            self._clear_pending_compare_annotation_tool
         )
         self._connect_reference_annotation_signals()
         self.reference_canvas.image_about_to_change.connect(
@@ -190,7 +229,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self._remember_main_image_before_change
         )
         self.canvas.image_loaded.connect(self._main_image_changed)
-        self.canvas.directory_set.connect(lambda _directory: self.refresh_compare_images())
+        self.canvas.directory_set.connect(
+            lambda _directory: self.refresh_compare_images()
+        )
 
         center_layout: QtWidgets.QVBoxLayout = cast(
             QtWidgets.QVBoxLayout, self.frameCenter.layout()
@@ -230,7 +271,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.compare_pane.hide()
         settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
         saved_layout: str = str(settings.value("compare/layout", "1x2"))
-        self.set_compare_layout(saved_layout if saved_layout in {"1x2", "2x1"} else "1x2")
+        self.set_compare_layout(
+            saved_layout if saved_layout in {"1x2", "2x1"} else "1x2"
+        )
 
         # Image data fields
         self.canvas.image_loaded.connect(self.display_coordinates)
@@ -285,8 +328,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             canvas.insert_external_annotation_vertex
         )
         view.external_annotation_delete_vertex_requested.connect(
-            lambda annotation_index, vertex_index: self.delete_annotation_vertex_for_canvas(
-                canvas, annotation_index, vertex_index
+            lambda annotation_index, vertex_index: (
+                self.delete_annotation_vertex_for_canvas(
+                    canvas, annotation_index, vertex_index
+                )
             )
         )
         view.external_annotation_delete_requested.connect(
@@ -303,6 +348,90 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         view.external_annotation_selection_cleared.connect(
             canvas.clear_external_annotation_selection
         )
+
+    def _claim_pending_compare_annotation_tool(
+        self, view_name: str, view: CentralGraphicsView
+    ) -> None:
+        """Assign an armed drawing tool to the pane receiving a drawing click.
+
+        The graphics view emits this request only for an ordinary left click,
+        after temporary navigation and Shift-selection have been excluded. Qt
+        signal delivery is synchronous, so the selected drawing mode is active
+        before the same mouse-press handler continues and places the first
+        point or vertex.
+
+        Args:
+            view_name: ``"current"`` or ``"reference"``.
+            view: Graphics view receiving the first drawing click.
+        """
+        pending_mode: InteractionMode | None = (
+            self._pending_compare_annotation_mode
+        )
+        if pending_mode is None:
+            return
+
+        canvas: Canvas = (
+            self.reference_canvas
+            if view is self.reference_graphics_view
+            else self.canvas
+        )
+        if not canvas.current_image_name:
+            return
+
+        self._set_last_active_view(view_name)
+        self._pending_compare_annotation_mode = None
+        self._handoff_annotation_tool(view)
+        self._start_annotation_mode_on_view(view, pending_mode)
+
+    @staticmethod
+    def _start_annotation_mode_on_view(
+        view: CentralGraphicsView, mode: InteractionMode
+    ) -> None:
+        """Start one drawing mode on a specific image view.
+
+        Args:
+            view: Image view that will own the annotation tool.
+            mode: Point, line, or polygon drawing mode to start.
+        """
+        if mode is InteractionMode.POINT:
+            view.start_landmark_annotation()
+        elif mode is InteractionMode.LINE:
+            view.start_line_annotation()
+        elif mode is InteractionMode.POLYGON:
+            view.start_polygon_annotation()
+
+    def _clear_pending_compare_annotation_tool(self) -> None:
+        """Cancel a drawing tool that is armed but not yet assigned to a pane."""
+        if self._pending_compare_annotation_mode is None:
+            return
+        self._pending_compare_annotation_mode = None
+        self.annotation_tool_armed.emit(InteractionMode.COUNT.value)
+
+    def _arm_compare_annotation_tool(self, mode: InteractionMode) -> bool:
+        """Arm a drawing tool so the next click chooses its image pane.
+
+        Args:
+            mode: Point, line, or polygon drawing mode to arm.
+
+        Returns:
+            ``True`` when the tool was armed successfully.
+        """
+        if not self.canvas.current_image_name:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("No Image Loaded"),
+                self.tr("Load an image before drawing an annotation."),
+            )
+            return False
+
+        # Choosing a new drawing command explicitly supersedes any unfinished
+        # transient annotation in either pane. The next image click then owns
+        # the new tool and also places its first point/vertex.
+        self.graphicsView.cancel_annotation()
+        self.reference_graphics_view.cancel_annotation()
+        self._pending_compare_annotation_mode = mode
+        self.annotation_tool_armed.emit(mode.value)
+        return True
 
     def _set_last_active_view(self, view_name: str) -> None:
         """Remember the image pane most recently clicked by the user.
@@ -345,15 +474,55 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if other_view.interaction_mode.value != "count":
             other_view.cancel_annotation()
 
-    def undo_active_viewer(self) -> None:
-        """Undo in the viewer that currently owns focus."""
-        canvas, _view = self._active_annotation_context()
-        canvas.undo()
+    def _record_global_history(self, canvas: Canvas) -> None:
+        """Record one new history event in cross-pane chronological order.
 
-    def redo_active_viewer(self) -> None:
-        """Redo in the viewer that currently owns focus."""
-        canvas, _view = self._active_annotation_context()
-        canvas.redo()
+        A new edit invalidates redo history globally, matching normal undo/redo
+        semantics even when the previous undo happened in the other pane.
+
+        Args:
+            canvas: Canvas that recorded the new undoable event.
+        """
+        self._global_undo_order.append(canvas)
+        self._global_redo_order = []
+        self.canvas.clear_redo_history()
+        self.reference_canvas.clear_redo_history()
+
+    def _remove_canvas_from_global_history(self, canvas: Canvas) -> None:
+        """Remove stale global-history entries for one reset canvas.
+
+        Args:
+            canvas: Canvas whose local undo/redo queues were cleared.
+        """
+        self._global_undo_order = [
+            item for item in self._global_undo_order if item is not canvas
+        ]
+        self._global_redo_order = [
+            item for item in self._global_redo_order if item is not canvas
+        ]
+
+    def undo_global_history(self) -> None:
+        """Undo the most recent edit regardless of which pane created it."""
+        if not self._global_undo_order:
+            return
+        canvas: Canvas = self._global_undo_order.pop()
+        if canvas.undo():
+            self._global_redo_order.append(canvas)
+            return
+        # A failed persistence operation leaves the local event untouched. Keep
+        # the same event at the top globally rather than skipping to older work.
+        self._global_undo_order.append(canvas)
+
+    def redo_global_history(self) -> None:
+        """Redo the most recently undone edit regardless of pane."""
+        if not self._global_redo_order:
+            return
+        canvas: Canvas = self._global_redo_order.pop()
+        if canvas.redo():
+            self._global_undo_order.append(canvas)
+            return
+        # Match undo failure semantics: preserve chronology and stop here.
+        self._global_redo_order.append(canvas)
 
     def compare_enabled(self) -> bool:
         """Return whether the reference comparison pane is visible."""
@@ -393,6 +562,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             )
             self.compare_splitter.setSizes([1, 1])
         else:
+            self._clear_pending_compare_annotation_tool()
             self.reference_graphics_view.cancel_annotation()
             self._last_reference_image_name = (
                 self.reference_canvas.current_image_name
@@ -423,7 +593,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.compare_layout_changed.emit(normalized)
 
     def _remember_main_image_before_change(self) -> None:
-        """Remember the Current image so a reference promotion can swap panes."""
+        """Remember Current and cancel an unclaimed Compare drawing tool."""
+        self._clear_pending_compare_annotation_tool()
         self._main_image_before_change = self.canvas.current_image_name
 
     def _main_image_changed(self, directory: str, image_name: str) -> None:
@@ -513,6 +684,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         """
         if not image_name or image_name == self.canvas.current_image_name:
             return
+        self._clear_pending_compare_annotation_tool()
         image_path: str = os.path.join(self.canvas.directory, image_name)
         if not os.path.isfile(image_path):
             return
@@ -548,12 +720,16 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_canvas.refresh_external_annotation_styles()
 
     def cancel_annotation(self) -> None:
-        """Cancel the in-progress native annotation in the focused pane."""
+        """Cancel an armed tool or the last-clicked pane's annotation tool."""
+        if self._pending_compare_annotation_mode is not None:
+            self._clear_pending_compare_annotation_tool()
+            return
         _canvas, view = self._active_annotation_context()
         view.cancel_annotation()
 
     def start_annotation_selection(self) -> bool:
-        """Start native annotation selection/edit mode in the focused pane."""
+        """Start native annotation selection/edit mode in the last-clicked pane."""
+        self._clear_pending_compare_annotation_tool()
         canvas, view = self._active_annotation_context()
         if not canvas.current_image_name:
             QtWidgets.QMessageBox.warning(
@@ -567,7 +743,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         return True
 
     def delete_selected_annotation(self) -> None:
-        """Delete the selected annotation in the focused pane."""
+        """Delete the selected annotation in the last-clicked pane."""
         canvas, _view = self._active_annotation_context()
         self.delete_selected_annotation_for_canvas(canvas)
 
@@ -583,16 +759,20 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 self.tr("Unlock the annotation before deleting it."),
             )
             return
-        response = QtWidgets.QMessageBox.question(
-            self,
-            self.tr("Delete Annotation"),
-            self.tr("Delete the selected annotation? You can undo this with Ctrl+Z."),
+        response: QtWidgets.QMessageBox.StandardButton = (
+            QtWidgets.QMessageBox.question(
+                self,
+                self.tr("Delete Annotation"),
+                self.tr(
+                    "Delete the selected annotation? You can undo this with Ctrl+Z."
+                ),
+            )
         )
         if response == QtWidgets.QMessageBox.StandardButton.Yes:
             canvas.delete_selected_external_annotation()
 
     def edit_selected_annotation_properties(self) -> None:
-        """Edit properties for the selected annotation in the focused pane."""
+        """Edit properties for the selected annotation in the last-clicked pane."""
         canvas, _view = self._active_annotation_context()
         self.edit_selected_annotation_properties_for_canvas(canvas)
 
@@ -616,7 +796,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         )
 
     def set_selected_annotation_locked(self, locked: bool) -> None:
-        """Set lock state for the selected annotation in the focused pane."""
+        """Set lock state for the selected annotation in the last-clicked pane."""
         canvas, _view = self._active_annotation_context()
         self.set_selected_annotation_locked_for_canvas(canvas, locked)
 
@@ -636,7 +816,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     def delete_annotation_vertex(
         self, annotation_index: int, vertex_index: int
     ) -> None:
-        """Delete a selected vertex in the focused pane."""
+        """Delete a selected vertex in the last-clicked pane."""
         canvas, _view = self._active_annotation_context()
         self.delete_annotation_vertex_for_canvas(
             canvas, annotation_index, vertex_index
@@ -673,7 +853,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             )
 
     def start_landmark_point(self) -> bool:
-        """Start drawing a landmark point in the focused image pane."""
+        """Start or arm native landmark-point drawing."""
+        if self._compare_enabled:
+            return self._arm_compare_annotation_tool(InteractionMode.POINT)
+
         canvas, view = self._active_annotation_context()
         if not canvas.current_image_name:
             QtWidgets.QMessageBox.warning(
@@ -687,7 +870,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         return True
 
     def start_cutline(self) -> bool:
-        """Start drawing a native cutline in the focused image pane."""
+        """Start or arm native cutline drawing."""
+        if self._compare_enabled:
+            return self._arm_compare_annotation_tool(InteractionMode.LINE)
+
         canvas, view = self._active_annotation_context()
         if not canvas.current_image_name:
             QtWidgets.QMessageBox.warning(
@@ -701,7 +887,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         return True
 
     def start_count_region_polygon(self) -> bool:
-        """Start drawing a count-region polygon in the focused image pane."""
+        """Start or arm native count-region polygon drawing."""
+        if self._compare_enabled:
+            return self._arm_compare_annotation_tool(InteractionMode.POLYGON)
+
         canvas, view = self._active_annotation_context()
         if not canvas.current_image_name:
             QtWidgets.QMessageBox.warning(

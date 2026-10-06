@@ -16,9 +16,9 @@ class ComparePane(QtWidgets.QFrame):
     signals.
     """
 
-    image_requested = QtCore.pyqtSignal(str)
-    make_current_requested = QtCore.pyqtSignal()
-    hide_requested = QtCore.pyqtSignal()
+    image_requested: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
+    make_current_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    hide_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         """Create the reference pane.
