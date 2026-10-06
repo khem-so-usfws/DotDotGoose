@@ -73,6 +73,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     external_annotation_properties_requested = QtCore.pyqtSignal()
     external_annotation_lock_requested = QtCore.pyqtSignal(bool)
     external_annotation_selection_cleared = QtCore.pyqtSignal()
+    view_focused = QtCore.pyqtSignal()
+    view_activated = QtCore.pyqtSignal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         QtWidgets.QGraphicsView.__init__(self, parent)
@@ -102,12 +104,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.count_click_scene_point: QtCore.QPointF | None = None
         self.count_click_moved: bool = False
         self.count_click_threshold_px: int = 4
+        self.count_point_placement_enabled: bool = True
         self.setViewportUpdateMode(
             QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate
         )
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
         self.setFocus()
+
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
+        """Remember which image pane most recently owned keyboard focus."""
+        self.view_focused.emit()
+        super().focusInEvent(event)
 
     def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
         """Clear cached modifier state when the view loses focus.
@@ -509,6 +517,16 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.add_point.emit(QtCore.QPointF(point))
         return True
 
+    def set_count_point_placement_enabled(self, enabled: bool) -> None:
+        """Enable or disable DDG count-point placement in this viewer.
+
+        Args:
+            enabled: Whether Count-mode clicks may emit ``add_point``.
+        """
+        self.count_point_placement_enabled = bool(enabled)
+        if not self.count_point_placement_enabled:
+            self._cancel_pending_count_click()
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key.Key_Escape:
             if self.navigation_gesture is not None:
@@ -665,6 +683,16 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Handle mouse interaction and mark this pane as explicitly active.
+
+        Merely moving the pointer between comparison panes must not retarget
+        annotation menu commands.  A mouse press is an intentional pane
+        activation, so it is the durable signal used by ``CentralWidget``.
+
+        Args:
+            event: Mouse press event delivered by Qt.
+        """
+        self.view_activated.emit()
         navigation_override: NavigationOverride | None = (
             self._active_navigation_override()
         )
@@ -736,14 +764,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
         )
         if (
-            shift_pressed
+            self.count_point_placement_enabled
+            and shift_pressed
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
             self._cancel_pending_count_click()
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
             return
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+        if (
+            self.count_point_placement_enabled
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
             # Plain click is the primary count action. Ctrl+click remains a
             # harmless compatibility alias because Ctrl does not change this
             # branch; C/Z/X are the explicit navigation overrides.

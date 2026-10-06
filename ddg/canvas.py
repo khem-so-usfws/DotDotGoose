@@ -1738,6 +1738,19 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotation_document = None
         self.selected_external_annotation_index = None
 
+    def release_image(self) -> None:
+        """Release the currently decoded/displayed image without changing project data.
+
+        This is primarily used by the optional comparison pane so hiding the
+        pane returns memory use to the normal single-image DDG baseline.
+        """
+        self.selection = []
+        self.image_about_to_change.emit()
+        self._prepare_annotation_graphics_for_scene_clear()
+        self.clear()
+        self.current_image_name = None
+        self.image_cache = {"file_name": "", "channels": 0, "data": None}
+
     def load_image(self, in_file_name, redraw=False):
         Image.MAX_IMAGE_PIXELS = 1000000000
         file_name = in_file_name

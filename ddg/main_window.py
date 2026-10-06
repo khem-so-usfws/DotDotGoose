@@ -49,6 +49,49 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.setObjectName('File')
         menu.addAction(self.tr('Quit'), self.quit)
 
+        view_menu: QtWidgets.QMenu = self.menuBar().addMenu(self.tr("View"))
+        view_menu.setObjectName("View")
+        self.compare_action: QtGui.QAction = view_menu.addAction(
+            self.tr("Compare Image")
+        )
+        self.compare_action.setCheckable(True)
+        self.compare_action.setChecked(False)
+        self.compare_action.toggled.connect(
+            self.centralWidget().set_compare_enabled
+        )
+        self.centralWidget().compare_enabled_changed.connect(
+            self.compare_action.setChecked
+        )
+
+        compare_layout_menu: QtWidgets.QMenu = view_menu.addMenu(
+            self.tr("Compare Layout")
+        )
+        self.compare_layout_group: QtGui.QActionGroup = QtGui.QActionGroup(self)
+        self.compare_layout_group.setExclusive(True)
+        self.compare_1x2_action: QtGui.QAction = compare_layout_menu.addAction(
+            self.tr("1×2 Side by Side")
+        )
+        self.compare_1x2_action.setCheckable(True)
+        self.compare_2x1_action: QtGui.QAction = compare_layout_menu.addAction(
+            self.tr("2×1 Stacked")
+        )
+        self.compare_2x1_action.setCheckable(True)
+        self.compare_layout_group.addAction(self.compare_1x2_action)
+        self.compare_layout_group.addAction(self.compare_2x1_action)
+        self.compare_1x2_action.triggered.connect(
+            lambda: self.centralWidget().set_compare_layout("1x2")
+        )
+        self.compare_2x1_action.triggered.connect(
+            lambda: self.centralWidget().set_compare_layout("2x1")
+        )
+        if self.centralWidget().compare_layout() == "2x1":
+            self.compare_2x1_action.setChecked(True)
+        else:
+            self.compare_1x2_action.setChecked(True)
+        self.centralWidget().compare_layout_changed.connect(
+            self._compare_layout_changed
+        )
+
         annotation_menu = self.menuBar().addMenu(self.tr("Annotations"))
         annotation_menu.setObjectName("Annotations")
         select_annotation_action: QtGui.QAction = annotation_menu.addAction(
@@ -111,7 +154,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.centralWidget().canvas.dim_outside_count_region_enabled()
         )
         dim_outside_action.toggled.connect(
-            self.centralWidget().canvas.set_dim_outside_count_region
+            self.centralWidget().set_dim_outside_count_region
         )
 
         highlight_outside_points_action: QtGui.QAction = annotation_menu.addAction(
@@ -154,7 +197,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         show_points_action.toggled.connect(
-            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+            lambda visible: self.centralWidget().set_annotation_type_visible(
                 AnnotationShape.POINT, visible
             )
         )
@@ -169,7 +212,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         show_lines_action.toggled.connect(
-            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+            lambda visible: self.centralWidget().set_annotation_type_visible(
                 AnnotationShape.LINE, visible
             )
         )
@@ -184,7 +227,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         show_polygons_action.toggled.connect(
-            lambda visible: self.centralWidget().canvas.set_annotation_type_visible(
+            lambda visible: self.centralWidget().set_annotation_type_visible(
                 AnnotationShape.POLYGON, visible
             )
         )
@@ -204,6 +247,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.centralWidget().graphicsView.annotation_mode_changed.connect(
             self.annotation_mode_changed
+        )
+        self.centralWidget().reference_graphics_view.annotation_mode_changed.connect(
+            self.reference_annotation_mode_changed
         )
 
         annotation_menu.addSeparator()
@@ -228,6 +274,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.menuBar().addSeparator()
 
         self.menuBar().addAction(self.tr('About'), self.about_dialog.show)
+
+    def _compare_layout_changed(self, layout_name: str) -> None:
+        """Keep compare-layout menu checks synchronized with the central view."""
+        self.compare_1x2_action.setChecked(layout_name == "1x2")
+        self.compare_2x1_action.setChecked(layout_name == "2x1")
 
     def annotation_mode_changed(self, mode: str) -> None:
         """Show concise guidance when annotation mode changes.
@@ -274,6 +325,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             )
 
+    def reference_annotation_mode_changed(self, mode: str) -> None:
+        """Show status guidance appropriate to the non-counting reference pane."""
+        if mode == "count":
+            self.statusBar().showMessage(
+                self.tr(
+                    "Reference image: count-point placement is disabled; "
+                    "C+drag pans; Z+drag zooms in; X+drag zooms out; "
+                    "annotation tools remain available."
+                )
+            )
+            return
+        self.annotation_mode_changed(mode)
+
     def show_annotation_help(self) -> None:
         """Show concise built-in help for native annotation controls."""
         help_text: str = self.tr(
@@ -284,6 +348,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Z+drag: rectangle zoom in\n"
             "  X+drag: rectangle zoom out\n"
             "  Mouse wheel: incremental zoom\n\n"
+            "Compare image\n"
+            "  View > Compare Image shows one reference image beside/below Current.\n"
+            "  Count points can be added only in Current.\n"
+            "  Native annotations can be edited in either pane.\n"
+            "  Make Current swaps the reference with the Current image.\n\n"
             "Native annotations\n"
             "  Landmark: one point\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
@@ -303,7 +372,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Open annotation symbology settings and refresh visible annotations."""
         dialog: AnnotationSymbologyDialog = AnnotationSymbologyDialog(self)
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            self.centralWidget().canvas.refresh_external_annotation_styles()
+            self.centralWidget().refresh_annotation_styles()
 
     def start_annotation_selection(self) -> None:
         """Start native annotation selection/edit mode."""
