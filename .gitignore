@@ -8,3 +8,5 @@ doc/source/_build/
 .vscode/
 __pycache__/
 setup.cfg
+*.py[cod]
+.pytest_cache/
