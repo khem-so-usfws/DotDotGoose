@@ -25,15 +25,41 @@
 import os
 import json
 import glob
+from copy import deepcopy
+from typing import Any
+
 import numpy as np
 
 from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .annotations import (
+    Annotation,
+    AnnotationShape,
+    LabelMeDocument,
+    annotation_visibility_enabled,
+    append_labelme_annotation,
+    delete_labelme_annotation,
+    load_annotation_style,
+    load_labelme_document,
+    load_labelme_raw_document,
+    count_region_polygons,
+    point_in_count_regions,
+    point_in_polygon,
+    replace_labelme_annotations_by_label,
+    save_annotation_visibility,
+    update_labelme_annotation,
+    write_labelme_raw_document,
+)
+
+_ANNOTATION_HISTORY_IMAGE_DATA_KEY: str = "__ddg_history_preserve_image_data__"
+_ANNOTATION_HISTORY_UNAVAILABLE_KEY: str = "__ddg_history_snapshot_unavailable__"
+
 
 class Canvas(QtWidgets.QGraphicsScene):
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
     image_loaded = QtCore.pyqtSignal(str, str)  # Params (directory, image_name)
+    image_about_to_change = QtCore.pyqtSignal()
     points_loaded = QtCore.pyqtSignal(str)  # Params(survey_id)
     directory_set = QtCore.pyqtSignal(str)  # Params (directory)
     fields_updated = QtCore.pyqtSignal(list)
@@ -64,8 +90,15 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.image_cache = {'file_name': '', 'channels': 0, 'data': None}
         self.LUT = np.array([x for x in range(0, 256)], dtype=np.uint8)
         self.show_grid = True
+        self.show_points = True
 
         self.selected_pen = QtGui.QPen(QtGui.QBrush(QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern), 1)
+        self.external_annotations: list[Annotation] = []
+        self.external_annotation_document: LabelMeDocument | None = None
+        self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
+        self.external_annotation_handle_items: list[QtWidgets.QGraphicsItem] = []
+        self.selected_external_annotation_index: int | None = None
+        self.count_region_mask_item: QtWidgets.QGraphicsPathItem | None = None
 
     def add_class(self, class_name):
         if class_name not in self.classes:
@@ -82,17 +115,34 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def add_point(self, point):
         if self.current_image_name is not None and self.current_class_name is not None:
+            if (
+                self.point_is_outside_count_region(point)
+                and self.warn_outside_count_region_point_enabled()
+            ):
+                response = QtWidgets.QMessageBox.question(
+                    self.parent(),
+                    self.tr("Point Outside Count Region"),
+                    self.tr(
+                        "This point is outside the defined count region. "
+                        "Add it anyway?"
+                    ),
+                    QtWidgets.QMessageBox.StandardButton.Yes
+                    | QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No,
+                )
+                if response != QtWidgets.QMessageBox.StandardButton.Yes:
+                    return
+
             if self.current_class_name not in self.points[self.current_image_name]:
                 self.points[self.current_image_name][self.current_class_name] = []
-            display_radius = self.ui['point']['radius']
-            active_color = QtGui.QColor(self.ui['point']['color'][0], self.ui['point']['color'][1], self.ui['point']['color'][2])
-            active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
-            active_pen = QtGui.QPen(active_brush, 2)
             self.points[self.current_image_name][self.current_class_name].append(point)
-            self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+            self.display_points()
             self.update_point_count.emit(self.current_image_name, self.current_class_name, len(self.points[self.current_image_name][self.current_class_name]))
             self.dirty = True
-            self.undo_queue.append(('add', self.current_class_name, point))
+            self.undo_queue.append(
+                ('add', self.current_image_name, self.current_class_name, point)
+            )
+            self.redo_queue = []
 
     def clear_grid(self):
         for graphic in self.items():
@@ -100,8 +150,13 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.removeItem(graphic)
 
     def clear_points(self):
-        for graphic in self.items():
-            if isinstance(graphic, QtWidgets.QGraphicsEllipseItem):
+        for graphic in list(self.items()):
+            item_kind: object = graphic.data(0)
+            if item_kind in {
+                "ddg_bird_point",
+                "ddg_count_region_warning",
+                "ddg_selected_bird_point",
+            }:
                 self.removeItem(graphic)
 
     def clear_queues(self):
@@ -111,7 +166,10 @@ class Canvas(QtWidgets.QGraphicsScene):
     def delete_selected_points(self):
         if self.current_image_name is not None:
             points = self.points[self.current_image_name]
-            self.undo_queue.append(('delete', None, self.selection))
+            self.undo_queue.append(
+                ('delete', self.current_image_name, list(self.selection))
+            )
+            self.redo_queue = []
             for class_name, point in self.selection:
                 points[class_name].remove(point)
                 self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
@@ -148,29 +206,1272 @@ class Canvas(QtWidgets.QGraphicsScene):
                 proceed = False
         return proceed
 
-    def display_external_annotations(self, file_name):
-        file_name = '{}.json'.format(os.path.splitext(file_name)[0])
+    def add_landmark_annotation(self, point: QtCore.QPointF) -> None:
+        """Create and immediately save a landmark point annotation.
+
+        Args:
+            point: Landmark coordinate in source-image pixel coordinates.
+        """
+        annotation: Annotation = Annotation(
+            label="landmark",
+            shape_type=AnnotationShape.POINT,
+            points=[(point.x(), point.y())],
+        )
+        self._save_native_annotation(annotation)
+
+    def add_line_annotation(self, points: list[QtCore.QPointF]) -> None:
+        """Create and immediately save a cutline annotation.
+
+        Args:
+            points: Ordered cutline vertices in source-image pixel coordinates.
+        """
+        if len(points) < 2:
+            return
+        annotation: Annotation = Annotation(
+            label="cutline",
+            shape_type=AnnotationShape.LINE,
+            points=[(point.x(), point.y()) for point in points],
+        )
+        self._save_native_annotation(annotation)
+
+    def add_polygon_annotation(self, points: list[QtCore.QPointF]) -> None:
+        """Create and immediately save a count-region polygon.
+
+        Args:
+            points: Polygon vertices in source-image pixel coordinates.
+        """
+        if len(points) < 3:
+            return
+        annotation: Annotation = Annotation(
+            label="count_region",
+            shape_type=AnnotationShape.POLYGON,
+            points=[(point.x(), point.y()) for point in points],
+        )
+        self._save_native_annotation(annotation)
+
+    def _save_native_annotation(self, annotation: Annotation) -> None:
+        """Append one native annotation to the active image sidecar.
+
+        Args:
+            annotation: Valid native annotation to save and render.
+        """
+        if self.current_image_name is None:
+            return
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        image_height: int | None = None
+        image_width: int | None = None
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if image_data is not None and image_data.ndim >= 2:
+            image_height = int(image_data.shape[0])
+            image_width = int(image_data.shape[1])
+
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
         try:
-            file = open(file_name, 'r')
-            annotations = json.load(file)
-            file.close()
-            # Hard code for now, really needs to come from UI settings
-            brush = QtGui.QBrush(QtCore.Qt.GlobalColor.magenta, QtCore.Qt.BrushStyle.SolidPattern)
-            pen = QtGui.QPen(brush, 4)
-            if 'shapes' in annotations and 'imageData' in annotations:
-                # Labelme format
-                for shape in annotations['shapes']:
-                    if shape['shape_type'] == 'polygon':
-                        points = []
-                        for point in shape['points']:
-                            points.append(QtCore.QPointF(point[0], point[1]))
-                        # Consider saving in object for redisplay improvement
-                        self.addPolygon(QtGui.QPolygonF(points), pen)
-            else:
-                # Future formats can be added
-                pass
-        except Exception:
+            append_labelme_annotation(
+                image_path=image_path,
+                annotation=annotation,
+                image_width=image_width,
+                image_height=image_height,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The annotation could not be saved.\n\n{}").format(error),
+            )
+            return
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=None,
+            after_selection_source_index=annotation.source_shape_index,
+        )
+
+        self.external_annotations.append(annotation)
+        self._render_external_annotation(
+            annotation, len(self.external_annotations) - 1
+        )
+        if (
+            annotation.shape_type is AnnotationShape.POLYGON
+            and annotation.label == "count_region"
+        ):
+            self.refresh_count_region_mask()
+            self.display_points()
+
+    def has_count_regions(self) -> bool:
+        """Return whether the active image has explicit count-region polygons.
+
+        Returns:
+            ``True`` when at least one polygon labeled ``count_region`` exists.
+        """
+        return bool(count_region_polygons(self.external_annotations))
+
+    def set_whole_image_count_region(self) -> bool:
+        """Replace active-image count regions with one whole-image polygon.
+
+        Returns:
+            ``True`` when the count region was written successfully.
+        """
+        if self.current_image_name is None:
+            return False
+
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if image_data is None or image_data.ndim < 2:
+            return False
+
+        image_height: int = int(image_data.shape[0])
+        image_width: int = int(image_data.shape[1])
+        annotation: Annotation = Annotation(
+            label="count_region",
+            shape_type=AnnotationShape.POLYGON,
+            points=[
+                (0.0, 0.0),
+                (float(image_width), 0.0),
+                (float(image_width), float(image_height)),
+                (0.0, float(image_height)),
+            ],
+        )
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        try:
+            replace_labelme_annotations_by_label(
+                image_path=image_path,
+                label="count_region",
+                annotations=[annotation],
+                image_width=image_width,
+                image_height=image_height,
+                shape_type=AnnotationShape.POLYGON,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The count region could not be saved.\n\n{}").format(error),
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=None,
+            after_selection_source_index=annotation.source_shape_index,
+        )
+        self.display_external_annotations(image_path)
+        return True
+
+    def count_region_qa(self) -> dict[str, Any]:
+        """Summarize active-image points inside and outside count regions.
+
+        Returns:
+            Dictionary containing ``has_regions``, total ``inside`` and
+            ``outside`` counts, and per-class counts.
+        """
+        regions = count_region_polygons(self.external_annotations)
+        result: dict[str, Any] = {
+            "has_regions": bool(regions),
+            "inside": 0,
+            "outside": 0,
+            "by_class": {},
+        }
+        if self.current_image_name is None or not regions:
+            return result
+
+        image_points: dict[str, list[QtCore.QPointF]] = self.points.get(
+            self.current_image_name, {}
+        )
+        for class_name, points in image_points.items():
+            inside_count: int = 0
+            outside_count: int = 0
+            for point in points:
+                point_xy: tuple[float, float] = (
+                    float(point.x()),
+                    float(point.y()),
+                )
+                if any(
+                    point_in_polygon(point_xy, region.points) for region in regions
+                ):
+                    inside_count += 1
+                else:
+                    outside_count += 1
+            result["by_class"][class_name] = {
+                "inside": inside_count,
+                "outside": outside_count,
+            }
+            result["inside"] += inside_count
+            result["outside"] += outside_count
+        return result
+
+    def outside_count_region_points(self) -> list[tuple[str, QtCore.QPointF]]:
+        """Return active-image points outside explicit count regions.
+
+        Images without an explicit ``count_region`` polygon are unrestricted and
+        therefore return an empty list. The returned points are copies so QA
+        navigation cannot mutate stored DDG point data.
+
+        Returns:
+            ``(class_name, point)`` pairs for outside-region points.
+        """
+        if self.current_image_name is None:
+            return []
+        regions: list[Annotation] = count_region_polygons(
+            self.external_annotations
+        )
+        if not regions:
+            return []
+
+        outside_points: list[tuple[str, QtCore.QPointF]] = []
+        image_points: dict[str, list[QtCore.QPointF]] = self.points.get(
+            self.current_image_name, {}
+        )
+        for class_name in sorted(image_points):
+            for point in image_points[class_name]:
+                point_xy: tuple[float, float] = (
+                    float(point.x()),
+                    float(point.y()),
+                )
+                if not any(
+                    point_in_polygon(point_xy, region.points) for region in regions
+                ):
+                    outside_points.append((class_name, QtCore.QPointF(point)))
+        return outside_points
+
+    def point_is_outside_count_region(self, point: QtCore.QPointF) -> bool:
+        """Return whether a point is outside an explicit count region.
+
+        Images without any explicit ``count_region`` polygon are treated as
+        unrestricted, so their points are never flagged as outside.
+
+        Args:
+            point: Point in source-image pixel coordinates.
+
+        Returns:
+            ``True`` only when count regions exist and ``point`` is outside
+            every count-region polygon.
+        """
+        if not self.has_count_regions():
+            return False
+        return not point_in_count_regions(
+            (float(point.x()), float(point.y())), self.external_annotations
+        )
+
+    def highlight_outside_count_region_points_enabled(self) -> bool:
+        """Return whether outside-region points should be highlighted."""
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/highlight_outside_points", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_highlight_outside_count_region_points(self, enabled: bool) -> None:
+        """Persist and apply outside-region point highlighting.
+
+        Args:
+            enabled: Whether outside-region points should receive a warning ring.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue(
+            "annotations/count_region/highlight_outside_points", enabled
+        )
+        self.display_points()
+
+    def warn_outside_count_region_point_enabled(self) -> bool:
+        """Return whether DDG should warn before adding an outside point."""
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/warn_outside_point", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_warn_outside_count_region_point(self, enabled: bool) -> None:
+        """Persist the warning preference for new outside-region points.
+
+        Args:
+            enabled: Whether point placement should ask for confirmation.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue("annotations/count_region/warn_outside_point", enabled)
+
+    def dim_outside_count_region_enabled(self) -> bool:
+        """Return the persisted outside-region dimming preference.
+
+        Returns:
+            Whether the mask should be displayed.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        value: object = settings.value(
+            "annotations/count_region/dim_outside", True
+        )
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def set_dim_outside_count_region(self, enabled: bool) -> None:
+        """Persist and apply the outside-count-region dimming preference.
+
+        Args:
+            enabled: Whether dimming should be displayed.
+        """
+        settings: QtCore.QSettings = QtCore.QSettings("AMNH", "DotDotGoose")
+        settings.setValue("annotations/count_region/dim_outside", enabled)
+        self.refresh_count_region_mask()
+
+    def annotation_type_visible(self, shape_type: AnnotationShape) -> bool:
+        """Return whether one native annotation geometry type is visible.
+
+        Args:
+            shape_type: Geometry type to query.
+
+        Returns:
+            Persisted visibility state.
+        """
+        return annotation_visibility_enabled(shape_type)
+
+    def set_annotation_type_visible(
+        self,
+        shape_type: AnnotationShape,
+        visible: bool,
+    ) -> None:
+        """Persist and apply visibility for one annotation geometry type.
+
+        Args:
+            shape_type: Geometry type to show or hide.
+            visible: Whether it should be rendered.
+        """
+        save_annotation_visibility(shape_type, visible)
+        selected_index: int | None = self.selected_external_annotation_index
+        if (
+            not visible
+            and selected_index is not None
+            and 0 <= selected_index < len(self.external_annotations)
+            and self.external_annotations[selected_index].shape_type is shape_type
+        ):
+            self.selected_external_annotation_index = None
+        self._rerender_external_annotations(
+            refresh_mask=False, refresh_points=False
+        )
+
+    def _clear_count_region_mask(self) -> None:
+        """Remove the current outside-region mask from the scene."""
+        if self.count_region_mask_item is None:
+            return
+        try:
+            if self.count_region_mask_item.scene() is self:
+                self.removeItem(self.count_region_mask_item)
+        except RuntimeError:
             pass
+        self.count_region_mask_item = None
+
+    def refresh_count_region_mask(self) -> None:
+        """Render a translucent mask outside the union of count regions."""
+        self._clear_count_region_mask()
+        if not self.dim_outside_count_region_enabled():
+            return
+
+        regions = count_region_polygons(self.external_annotations)
+        image_data: np.ndarray | None = self.image_cache.get("data")
+        if not regions or image_data is None or image_data.ndim < 2:
+            return
+
+        image_height: float = float(image_data.shape[0])
+        image_width: float = float(image_data.shape[1])
+        valid_path: QtGui.QPainterPath = QtGui.QPainterPath()
+        for region in regions:
+            polygon = QtGui.QPolygonF(
+                [QtCore.QPointF(x, y) for x, y in region.points]
+            )
+            region_path: QtGui.QPainterPath = QtGui.QPainterPath()
+            region_path.addPolygon(polygon)
+            region_path.closeSubpath()
+            valid_path = valid_path.united(region_path)
+
+        image_path: QtGui.QPainterPath = QtGui.QPainterPath()
+        image_path.addRect(QtCore.QRectF(0.0, 0.0, image_width, image_height))
+        outside_path: QtGui.QPainterPath = image_path.subtracted(valid_path)
+        if outside_path.isEmpty():
+            return
+
+        mask_color: QtGui.QColor = QtGui.QColor(0, 0, 0, 90)
+        mask_pen: QtGui.QPen = QtGui.QPen(QtCore.Qt.PenStyle.NoPen)
+        mask_brush: QtGui.QBrush = QtGui.QBrush(mask_color)
+        item: QtWidgets.QGraphicsPathItem = self.addPath(
+            outside_path, mask_pen, mask_brush
+        )
+        item.setZValue(-5.0)
+        item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        self.count_region_mask_item = item
+
+    def display_external_annotations(
+        self,
+        file_name: str,
+        refresh_points: bool = True,
+    ) -> None:
+        """Render supported LabelMe annotations for an image.
+
+        Native annotations are deliberately kept separate from DDG bird-count
+        points. Point and line annotations are rendered as painter paths so
+        existing ``clear_points`` and ``clear_grid`` behavior does not remove
+        them when the active class or grid display changes.
+
+        Args:
+            file_name: Full path to the source image.
+            refresh_points: Whether point graphics should be redrawn after the
+                annotations are loaded. Image loading already redraws points, so
+                callers may disable this to avoid duplicate work.
+        """
+        self._clear_external_annotation_graphics()
+        self._clear_count_region_mask()
+        self.external_annotations = []
+        self.external_annotation_document = None
+        self.selected_external_annotation_index = None
+        try:
+            document: LabelMeDocument | None = load_labelme_document(file_name)
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            QtWidgets.QMessageBox.warning(
+                self.parent(),
+                self.tr("Annotation Load Warning"),
+                self.tr(
+                    "Annotations for {} could not be loaded. The image will "
+                    "remain available, but its annotation sidecar should be "
+                    "checked before counting.\n\n{}"
+                ).format(os.path.basename(file_name), error),
+            )
+            return
+
+        if document is None:
+            return
+
+        important_warnings: list[str] = [
+            warning
+            for warning in document.warnings
+            if "was not loaded" in warning
+            or "'shapes' value is not a list" in warning
+        ]
+        if important_warnings:
+            QtWidgets.QMessageBox.warning(
+                self.parent(),
+                self.tr("Annotation Load Warning"),
+                self.tr(
+                    "Some annotations for {} could not be loaded and will not "
+                    "be displayed. Check the sidecar before counting.\n\n{}"
+                ).format(
+                    os.path.basename(file_name),
+                    "\n".join(important_warnings[:5]),
+                ),
+            )
+
+        self.external_annotation_document = document
+        self.external_annotations = document.annotations
+        annotation_index: int
+        annotation: Annotation
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            self._render_external_annotation(annotation, annotation_index)
+        self.refresh_count_region_mask()
+        if refresh_points:
+            self.display_points()
+
+    def _render_external_annotation(
+        self,
+        annotation: Annotation,
+        annotation_index: int,
+    ) -> None:
+        """Render one native annotation on the current graphics scene.
+
+        Args:
+            annotation: Annotation to render.
+            annotation_index: Index in ``external_annotations``.
+        """
+        if not self.annotation_type_visible(annotation.shape_type):
+            return
+
+        style = load_annotation_style(annotation.shape_type)
+        annotation_color: QtGui.QColor = QtGui.QColor(style.color)
+        annotation_pen: QtGui.QPen = QtGui.QPen(annotation_color, style.width)
+        annotation_pen.setCosmetic(True)
+        if annotation_index == self.selected_external_annotation_index:
+            annotation_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            annotation_pen.setWidthF(max(style.width + 1.5, 2.0))
+
+        item: QtWidgets.QGraphicsItem | None = None
+        if annotation.shape_type is AnnotationShape.POINT:
+            x: float
+            y: float
+            x, y = annotation.points[0]
+            path: QtGui.QPainterPath = QtGui.QPainterPath()
+            path.addEllipse(QtCore.QPointF(0.0, 0.0), 6.0, 6.0)
+            item = self.addPath(path, annotation_pen)
+            item.setPos(x, y)
+            item.setFlag(
+                QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+                True,
+            )
+
+        elif annotation.shape_type is AnnotationShape.LINE:
+            first_x: float
+            first_y: float
+            first_x, first_y = annotation.points[0]
+            path = QtGui.QPainterPath(QtCore.QPointF(first_x, first_y))
+            for x, y in annotation.points[1:]:
+                path.lineTo(x, y)
+            item = self.addPath(path, annotation_pen)
+
+        elif annotation.shape_type is AnnotationShape.POLYGON:
+            polygon_points: list[QtCore.QPointF] = [
+                QtCore.QPointF(x, y) for x, y in annotation.points
+            ]
+            item = self.addPolygon(
+                QtGui.QPolygonF(polygon_points),
+                annotation_pen,
+            )
+
+        if item is not None:
+            item.setZValue(2.0)
+            item.setData(0, "ddg_external_annotation")
+            item.setData(1, annotation_index)
+            item.setData(3, annotation.shape_type.value)
+            item.setData(4, annotation.locked)
+            if annotation.label:
+                tooltip: str = annotation.label
+                if annotation.locked:
+                    tooltip += self.tr(" (locked)")
+                item.setToolTip(tooltip)
+            self.external_annotation_items.append(item)
+
+    def _render_external_annotation_handles(self) -> None:
+        """Render fixed-screen-size vertex handles for the selected annotation."""
+        self._clear_external_annotation_handles()
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked or not self.annotation_type_visible(annotation.shape_type):
+            return
+        style = load_annotation_style(annotation.shape_type)
+        color: QtGui.QColor = QtGui.QColor(style.color)
+        pen: QtGui.QPen = QtGui.QPen(color, 2.0)
+        brush: QtGui.QBrush = QtGui.QBrush(
+            QtGui.QColor(255, 255, 255, 220),
+            QtCore.Qt.BrushStyle.SolidPattern,
+        )
+
+        vertex_index: int
+        x: float
+        y: float
+        for vertex_index, (x, y) in enumerate(annotation.points):
+            handle_path: QtGui.QPainterPath = QtGui.QPainterPath()
+            handle_path.addEllipse(QtCore.QPointF(0.0, 0.0), 5.0, 5.0)
+            handle: QtWidgets.QGraphicsPathItem = self.addPath(
+                handle_path, pen, brush
+            )
+            handle.setPos(x, y)
+            handle.setFlag(
+                QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+                True,
+            )
+            handle.setZValue(20.0)
+            handle.setData(0, "ddg_external_annotation_handle")
+            handle.setData(1, annotation_index)
+            handle.setData(2, vertex_index)
+            handle.setData(3, annotation.shape_type.value)
+            self.external_annotation_handle_items.append(handle)
+
+    def _clear_external_annotation_handles(self) -> None:
+        """Remove all transient vertex handles from the scene."""
+        item: QtWidgets.QGraphicsItem
+        for item in self.external_annotation_handle_items:
+            try:
+                if item.scene() is self:
+                    self.removeItem(item)
+            except RuntimeError:
+                # The scene may already have deleted C++ graphics objects after
+                # a full image clear. Dropping the stale Python reference is safe.
+                pass
+        self.external_annotation_handle_items = []
+
+    def _clear_external_annotation_graphics(self) -> None:
+        """Remove rendered native annotations and transient edit handles."""
+        item: QtWidgets.QGraphicsItem
+        for item in self.external_annotation_items:
+            try:
+                if item.scene() is self:
+                    self.removeItem(item)
+            except RuntimeError:
+                # See ``_clear_external_annotation_handles``.
+                pass
+        self.external_annotation_items = []
+        self._clear_external_annotation_handles()
+
+    def clear_external_annotation_selection(self) -> None:
+        """Clear the selected native annotation and its vertex handles."""
+        had_selection: bool = self.selected_external_annotation_index is not None
+        self.selected_external_annotation_index = None
+        self._clear_external_annotation_handles()
+        if had_selection:
+            self._rerender_external_annotations(
+                refresh_mask=False, refresh_points=False
+            )
+
+    def select_external_annotation(self, annotation_index: int) -> None:
+        """Select one native annotation by internal index.
+
+        Args:
+            annotation_index: Index in ``external_annotations`` or ``-1`` to
+                clear selection.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            self.clear_external_annotation_selection()
+            return
+        self.selected_external_annotation_index = annotation_index
+        self._rerender_external_annotations(
+            refresh_mask=False, refresh_points=False
+        )
+
+    def move_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+        point: QtCore.QPointF,
+    ) -> None:
+        """Move one selected annotation vertex in memory.
+
+        The geometry is persisted when the drag finishes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex index within the selected annotation.
+            point: New source-image pixel coordinate.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return
+        if vertex_index < 0 or vertex_index >= len(annotation.points):
+            return
+        annotation.points[vertex_index] = (point.x(), point.y())
+        self.selected_external_annotation_index = annotation_index
+        refresh_mask: bool = (
+            annotation.shape_type is AnnotationShape.POLYGON
+            and annotation.label == "count_region"
+        )
+        self._rerender_external_annotations(
+            refresh_mask=refresh_mask, refresh_points=False
+        )
+
+    def move_external_annotation(
+        self,
+        annotation_index: int,
+        delta: QtCore.QPointF,
+    ) -> None:
+        """Translate one selected annotation in memory by a scene delta.
+
+        Geometry is persisted when the drag finishes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            delta: Source-image x/y translation since the previous mouse event.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return
+        annotation.points = [
+            (x + delta.x(), y + delta.y()) for x, y in annotation.points
+        ]
+        self.selected_external_annotation_index = annotation_index
+        refresh_mask: bool = (
+            annotation.shape_type is AnnotationShape.POLYGON
+            and annotation.label == "count_region"
+        )
+        self._rerender_external_annotations(
+            refresh_mask=refresh_mask, refresh_points=False
+        )
+
+    def finish_external_annotation_move(self, annotation_index: int) -> None:
+        """Persist a whole-annotation translation after dragging completes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+        """
+        self._persist_external_annotation_edit(annotation_index)
+
+    def finish_external_annotation_vertex_move(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+    ) -> None:
+        """Persist an edited annotation after a vertex drag completes.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex index that was moved. This is retained in the
+                API for future undo/redo support.
+        """
+        del vertex_index
+        self._persist_external_annotation_edit(annotation_index)
+
+    def insert_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        point: QtCore.QPointF,
+    ) -> bool:
+        """Insert a vertex on the nearest segment of a line or polygon.
+
+        The inserted coordinate is projected onto the nearest segment so the
+        shape does not jump toward an imprecise context-menu click.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            point: Source-image coordinate near the desired edge.
+
+        Returns:
+            ``True`` when a vertex was inserted and saved.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
+        if annotation.shape_type is AnnotationShape.POINT:
+            return False
+
+        nearest: tuple[int, tuple[float, float]] | None = self._nearest_segment_point(
+            annotation, point
+        )
+        if nearest is None:
+            return False
+        segment_index, projected_point = nearest
+        insert_index: int = segment_index + 1
+        annotation.points.insert(insert_index, projected_point)
+        self.selected_external_annotation_index = annotation_index
+        return self._persist_external_annotation_edit(annotation_index)
+
+    def delete_external_annotation_vertex(
+        self,
+        annotation_index: int,
+        vertex_index: int,
+    ) -> bool:
+        """Delete one line/polygon vertex when valid geometry will remain.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+            vertex_index: Vertex to remove.
+
+        Returns:
+            ``True`` when the vertex was removed and saved.
+        """
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
+        if vertex_index < 0 or vertex_index >= len(annotation.points):
+            return False
+        minimum_vertices: int
+        if annotation.shape_type is AnnotationShape.LINE:
+            minimum_vertices = 2
+        elif annotation.shape_type is AnnotationShape.POLYGON:
+            minimum_vertices = 3
+        else:
+            return False
+        if len(annotation.points) <= minimum_vertices:
+            return False
+
+        annotation.points.pop(vertex_index)
+        self.selected_external_annotation_index = annotation_index
+        return self._persist_external_annotation_edit(annotation_index)
+
+    def _persist_external_annotation_edit(self, annotation_index: int) -> bool:
+        """Persist one in-memory annotation geometry edit with undo history.
+
+        Args:
+            annotation_index: Index in ``external_annotations``.
+
+        Returns:
+            ``True`` when the edit was saved successfully.
+        """
+        if self.current_image_name is None:
+            return False
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return False
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        try:
+            update_labelme_annotation(image_path, annotation)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The annotation edit could not be saved.\n\n{}").format(error),
+            )
+            self._reload_external_annotations_preserving_selection(
+                image_path, source_shape_index
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=source_shape_index,
+        )
+        self._reload_external_annotations_preserving_selection(
+            image_path, source_shape_index
+        )
+        return True
+
+    def _nearest_segment_point(
+        self,
+        annotation: Annotation,
+        point: QtCore.QPointF,
+    ) -> tuple[int, tuple[float, float]] | None:
+        """Find the nearest line/polygon segment and projected coordinate.
+
+        Args:
+            annotation: Line or polygon annotation.
+            point: Source-image coordinate supplied by the user.
+
+        Returns:
+            ``(segment_index, projected_point)`` or ``None`` when the shape has
+            no editable segments.
+        """
+        point_count: int = len(annotation.points)
+        if point_count < 2:
+            return None
+
+        segment_count: int = point_count
+        if annotation.shape_type is AnnotationShape.LINE:
+            segment_count = point_count - 1
+
+        best_segment: int | None = None
+        best_point: tuple[float, float] | None = None
+        best_distance_squared: float | None = None
+        target_x: float = point.x()
+        target_y: float = point.y()
+
+        for segment_index in range(segment_count):
+            start_x, start_y = annotation.points[segment_index]
+            end_x, end_y = annotation.points[(segment_index + 1) % point_count]
+            dx: float = end_x - start_x
+            dy: float = end_y - start_y
+            length_squared: float = (dx * dx) + (dy * dy)
+            if length_squared == 0.0:
+                projected_x = start_x
+                projected_y = start_y
+            else:
+                fraction: float = (
+                    ((target_x - start_x) * dx) + ((target_y - start_y) * dy)
+                ) / length_squared
+                fraction = max(0.0, min(1.0, fraction))
+                projected_x = start_x + (fraction * dx)
+                projected_y = start_y + (fraction * dy)
+
+            distance_squared: float = (
+                ((target_x - projected_x) ** 2) + ((target_y - projected_y) ** 2)
+            )
+            if (
+                best_distance_squared is None
+                or distance_squared < best_distance_squared
+            ):
+                best_distance_squared = distance_squared
+                best_segment = segment_index
+                best_point = (projected_x, projected_y)
+
+        if best_segment is None or best_point is None:
+            return None
+        return best_segment, best_point
+
+    def selected_external_annotation(self) -> Annotation | None:
+        """Return the selected native annotation, if any.
+
+        Returns:
+            Selected annotation or ``None``.
+        """
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return None
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return None
+        return self.external_annotations[annotation_index]
+
+    def update_selected_external_annotation_properties(
+        self,
+        label: str,
+        locked: bool,
+    ) -> bool:
+        """Persist label and lock-state changes for the selected annotation.
+
+        Args:
+            label: New non-empty semantic label.
+            locked: Whether editing should be locked.
+
+        Returns:
+            ``True`` when the properties were saved successfully.
+        """
+        annotation: Annotation | None = self.selected_external_annotation()
+        if annotation is None or self.current_image_name is None:
+            return False
+        normalized_label: str = label.strip()
+        if not normalized_label:
+            return False
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return False
+        if annotation.label == normalized_label and annotation.locked == locked:
+            return True
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        annotation.label = normalized_label
+        annotation.set_locked(locked)
+        try:
+            update_labelme_annotation(image_path, annotation)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Save Failed"),
+                self.tr("The annotation properties could not be saved.\n\n{}").format(
+                    error
+                ),
+            )
+            self._reload_external_annotations_preserving_selection(
+                image_path, source_shape_index
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=source_shape_index,
+        )
+        self._reload_external_annotations_preserving_selection(
+            image_path, source_shape_index
+        )
+        return True
+
+    def set_selected_external_annotation_locked(self, locked: bool) -> bool:
+        """Persist the edit-lock state for the selected annotation.
+
+        Args:
+            locked: Whether editing should be locked.
+
+        Returns:
+            ``True`` when a selected annotation was saved successfully.
+        """
+        annotation: Annotation | None = self.selected_external_annotation()
+        if annotation is None:
+            return False
+        return self.update_selected_external_annotation_properties(
+            annotation.label, locked
+        )
+
+    def delete_selected_external_annotation(self) -> bool:
+        """Delete the currently selected native annotation from its sidecar.
+
+        Returns:
+            ``True`` when an annotation was deleted, otherwise ``False``.
+        """
+        if self.current_image_name is None:
+            return False
+        annotation_index: int | None = self.selected_external_annotation_index
+        if annotation_index is None:
+            return False
+        if annotation_index < 0 or annotation_index >= len(self.external_annotations):
+            return False
+
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked:
+            return False
+        source_shape_index: int | None = annotation.source_shape_index
+        if source_shape_index is None:
+            return False
+
+        image_path: str = os.path.join(self.directory, self.current_image_name)
+        before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        try:
+            delete_labelme_annotation(image_path, source_shape_index)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            IndexError,
+            ValueError,
+        ) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation Delete Failed"),
+                self.tr("The annotation could not be deleted.\n\n{}").format(error),
+            )
+            return False
+
+        after_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
+            image_path
+        )
+        self._record_annotation_history(
+            image_path=image_path,
+            before_snapshot=before_snapshot,
+            after_snapshot=after_snapshot,
+            before_selection_source_index=source_shape_index,
+            after_selection_source_index=None,
+        )
+        self.display_external_annotations(image_path)
+        return True
+
+    def _annotation_history_snapshot(
+        self,
+        image_path: str,
+    ) -> dict[str, Any] | None:
+        """Return a lightweight LabelMe document for annotation undo/redo.
+
+        Embedded LabelMe ``imageData`` can be very large. DDG never edits that
+        field, so history snapshots omit its value and restore the current live
+        value when undo/redo is applied. This avoids retaining one base64 image
+        copy for every annotation edit.
+
+        Args:
+            image_path: Source image whose annotation sidecar should be read.
+
+        Returns:
+            Detached LabelMe root object, or ``None`` when no sidecar exists.
+        """
+        try:
+            raw_data: dict[str, Any] | None = load_labelme_raw_document(image_path)
+        except (OSError, json.JSONDecodeError, ValueError):
+            # ``None`` has a real meaning in history: no sidecar existed. Keep
+            # read failures distinguishable so a later undo/redo cannot
+            # accidentally delete a valid annotation file.
+            return {_ANNOTATION_HISTORY_UNAVAILABLE_KEY: True}
+        if raw_data is None:
+            return None
+
+        snapshot: dict[str, Any] = deepcopy(raw_data)
+        if snapshot.get("imageData") is not None:
+            snapshot["imageData"] = None
+            snapshot[_ANNOTATION_HISTORY_IMAGE_DATA_KEY] = True
+        return snapshot
+
+    @staticmethod
+    def _annotation_snapshot_unavailable(
+        snapshot: dict[str, Any] | None,
+    ) -> bool:
+        """Return whether a history snapshot represents a read failure.
+
+        ``None`` intentionally means that no sidecar existed. A separate
+        sentinel prevents transient read failures from being interpreted as
+        "delete the sidecar" during undo/redo.
+
+        Args:
+            snapshot: Candidate history snapshot.
+
+        Returns:
+            ``True`` for the private unavailable-snapshot sentinel.
+        """
+        return bool(
+            snapshot is not None
+            and snapshot.get(_ANNOTATION_HISTORY_UNAVAILABLE_KEY, False)
+        )
+
+    def _record_annotation_history(
+        self,
+        image_path: str,
+        before_snapshot: dict[str, Any] | None,
+        after_snapshot: dict[str, Any] | None,
+        before_selection_source_index: int | None,
+        after_selection_source_index: int | None,
+    ) -> None:
+        """Append one complete annotation-document change to DDG history.
+
+        Args:
+            image_path: Source image associated with the sidecar.
+            before_snapshot: LabelMe document before the operation.
+            after_snapshot: LabelMe document after the operation.
+            before_selection_source_index: Shape index to select when undoing.
+            after_selection_source_index: Shape index to select when redoing.
+        """
+        if self._annotation_snapshot_unavailable(before_snapshot) or (
+            self._annotation_snapshot_unavailable(after_snapshot)
+        ):
+            return
+        if before_snapshot == after_snapshot:
+            return
+        event: tuple[object, ...] = (
+            "annotation_json",
+            image_path,
+            deepcopy(before_snapshot),
+            deepcopy(after_snapshot),
+            before_selection_source_index,
+            after_selection_source_index,
+        )
+        self.undo_queue.append(event)
+        self.redo_queue = []
+
+    def _apply_annotation_history_snapshot(
+        self,
+        image_path: str,
+        snapshot: dict[str, Any] | None,
+        selection_source_index: int | None,
+    ) -> bool:
+        """Restore a LabelMe sidecar snapshot and refresh the active image.
+
+        Args:
+            image_path: Source image associated with the sidecar.
+            snapshot: Raw LabelMe document to restore, or ``None`` to remove it.
+            selection_source_index: Shape source index to reselect after restore.
+
+        Returns:
+            ``True`` when the history snapshot was restored successfully.
+        """
+        restored_snapshot: dict[str, Any] | None = deepcopy(snapshot)
+        if restored_snapshot is not None and bool(
+            restored_snapshot.pop(_ANNOTATION_HISTORY_IMAGE_DATA_KEY, False)
+        ):
+            try:
+                current_document: dict[str, Any] | None = load_labelme_raw_document(
+                    image_path
+                )
+            except (OSError, json.JSONDecodeError, ValueError):
+                current_document = None
+            if current_document is not None:
+                restored_snapshot["imageData"] = current_document.get("imageData")
+
+        try:
+            write_labelme_raw_document(image_path, restored_snapshot)
+        except (OSError, TypeError, ValueError) as error:
+            QtWidgets.QMessageBox.critical(
+                self.parent(),
+                self.tr("Annotation History Restore Failed"),
+                self.tr(
+                    "The annotation undo/redo operation could not be written. "
+                    "The current sidecar was left unchanged.\n\n{}"
+                ).format(error),
+            )
+            return False
+
+        current_path: str | None = None
+        if self.current_image_name is not None:
+            current_path = os.path.normcase(
+                os.path.abspath(os.path.join(self.directory, self.current_image_name))
+            )
+        restored_path: str = os.path.normcase(os.path.abspath(image_path))
+        if current_path != restored_path:
+            return True
+
+        self.display_external_annotations(image_path)
+        if selection_source_index is None:
+            return True
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            if annotation.source_shape_index == selection_source_index:
+                self.selected_external_annotation_index = annotation_index
+                self._rerender_external_annotations(
+                    refresh_mask=False, refresh_points=False
+                )
+                return True
+        return True
+
+    def _reload_external_annotations_preserving_selection(
+        self,
+        image_path: str,
+        source_shape_index: int,
+    ) -> None:
+        """Reload annotations and restore selection by LabelMe source index.
+
+        Args:
+            image_path: Active source image path.
+            source_shape_index: LabelMe shape index that should remain selected.
+        """
+        self.display_external_annotations(image_path)
+        annotation_index: int
+        annotation: Annotation
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            if annotation.source_shape_index == source_shape_index:
+                self.selected_external_annotation_index = annotation_index
+                self._rerender_external_annotations(
+                    refresh_mask=False, refresh_points=False
+                )
+                return
+
+    def _rerender_external_annotations(
+        self,
+        refresh_mask: bool = True,
+        refresh_points: bool = True,
+    ) -> None:
+        """Re-render native annotations while preserving selection state.
+
+        Args:
+            refresh_mask: Whether the outside-count-region mask should be rebuilt.
+            refresh_points: Whether point graphics and outside-region warning
+                rings should be redrawn.
+        """
+        self._clear_external_annotation_graphics()
+
+        annotation_index: int
+        annotation: Annotation
+        for annotation_index, annotation in enumerate(self.external_annotations):
+            self._render_external_annotation(annotation, annotation_index)
+        self._render_external_annotation_handles()
+        if refresh_mask:
+            self.refresh_count_region_mask()
+        if refresh_points:
+            self.display_points()
+
+    def refresh_external_annotation_styles(self) -> None:
+        """Re-render current native annotations using configured symbology."""
+        self._rerender_external_annotations(
+            refresh_mask=False, refresh_points=False
+        )
 
     def display_grid(self):
         self.clear_grid()
@@ -187,10 +1488,74 @@ class Canvas(QtWidgets.QGraphicsScene):
                 line = QtCore.QLineF(0.0, y, rect.width(), y)
                 self.addLine(line, pen)
 
+    def _render_bird_point(
+        self,
+        point: QtCore.QPointF,
+        pen: QtGui.QPen,
+        brush: QtGui.QBrush,
+        *,
+        highlight_outside: bool = False,
+        count_regions: list[Annotation] | None = None,
+    ) -> None:
+        """Render one count point and an optional outside-region warning ring.
+
+        Args:
+            point: Point in source-image pixel coordinates.
+            pen: Normal point outline.
+            brush: Normal point fill.
+            highlight_outside: Whether outside-region warning rings are enabled.
+            count_regions: Precomputed count-region polygons for this redraw.
+        """
+        display_radius: float = float(self.ui['point']['radius'])
+        point_rect: QtCore.QRectF = QtCore.QRectF(
+            point.x() - ((display_radius - 1.0) / 2.0),
+            point.y() - ((display_radius - 1.0) / 2.0),
+            display_radius,
+            display_radius,
+        )
+        item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+            point_rect, pen, brush
+        )
+        item.setData(0, "ddg_bird_point")
+        item.setZValue(0.0)
+
+        regions: list[Annotation] = count_regions or []
+        if not highlight_outside or not regions:
+            return
+        point_xy: tuple[float, float] = (float(point.x()), float(point.y()))
+        if any(point_in_polygon(point_xy, region.points) for region in regions):
+            return
+
+        warning_radius: float = display_radius + 10.0
+        warning_rect: QtCore.QRectF = QtCore.QRectF(
+            point.x() - ((warning_radius - 1.0) / 2.0),
+            point.y() - ((warning_radius - 1.0) / 2.0),
+            warning_radius,
+            warning_radius,
+        )
+        warning_pen: QtGui.QPen = QtGui.QPen(QtGui.QColor(255, 64, 64), 3.0)
+        warning_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+        warning_item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+            warning_rect, warning_pen
+        )
+        warning_item.setData(0, "ddg_count_region_warning")
+        warning_item.setToolTip(self.tr("Point is outside the count region"))
+        warning_item.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+        warning_item.setZValue(1.0)
+
     def display_points(self):
         self.clear_points()
+        if not self.show_points:
+            return
         if self.current_image_name in self.points:
-            display_radius = self.ui['point']['radius']
+            highlight_outside: bool = (
+                self.highlight_outside_count_region_points_enabled()
+            )
+            regions: list[Annotation] = (
+                count_region_polygons(self.external_annotations)
+                if highlight_outside
+                else []
+            )
             active_color = QtGui.QColor(self.ui['point']['color'][0], self.ui['point']['color'][1], self.ui['point']['color'][2])
             active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
             active_pen = QtGui.QPen(active_brush, 2)
@@ -200,9 +1565,21 @@ class Canvas(QtWidgets.QGraphicsScene):
                 pen = QtGui.QPen(brush, 2)
                 for point in points:
                     if class_name == self.current_class_name:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), active_pen, active_brush)
+                        self._render_bird_point(
+                            point,
+                            active_pen,
+                            active_brush,
+                            highlight_outside=highlight_outside,
+                            count_regions=regions,
+                        )
                     else:
-                        self.addEllipse(QtCore.QRectF(point.x() - ((display_radius - 1) / 2), point.y() - ((display_radius - 1) / 2), display_radius, display_radius), pen, brush)
+                        self._render_bird_point(
+                            point,
+                            pen,
+                            brush,
+                            highlight_outside=highlight_outside,
+                            count_regions=regions,
+                        )
 
     def export_counts(self, file_name):
         if self.current_image_name is not None:
@@ -348,6 +1725,19 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.directory_set.emit(self.directory)
             self.load_images(drop_list)
 
+    def _prepare_annotation_graphics_for_scene_clear(self) -> None:
+        """Release annotation graphics before ``QGraphicsScene.clear``.
+
+        Qt deletes the underlying C++ graphics items when a scene is cleared.
+        Explicitly removing DDG-owned annotation items first prevents stale
+        Python wrappers from surviving an image switch.
+        """
+        self._clear_count_region_mask()
+        self._clear_external_annotation_graphics()
+        self.external_annotations = []
+        self.external_annotation_document = None
+        self.selected_external_annotation_index = None
+
     def load_image(self, in_file_name, redraw=False):
         Image.MAX_IMAGE_PIXELS = 1000000000
         file_name = in_file_name
@@ -361,6 +1751,10 @@ class Canvas(QtWidgets.QGraphicsScene):
         if self.directory == os.path.split(file_name)[0]:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
             self.selection = []
+            # Tear down transient/view-owned graphics while their C++ objects
+            # are still valid.  QGraphicsScene.clear() deletes all scene items.
+            self.image_about_to_change.emit()
+            self._prepare_annotation_graphics_for_scene_clear()
             self.clear()
             self.current_image_name = os.path.split(file_name)[1]
             if self.current_image_name not in self.points:
@@ -388,6 +1782,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                         qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
+                        item.setZValue(-10.0)
                         item.moveBy(s, 0)
                     # Fix for windows, thin slivers at the end cause the app to hang. QImage bug?
                     if tail > 0:
@@ -396,6 +1791,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                         qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
+                        item.setZValue(-10.0)
                         item.moveBy(max_stride, 0)
                 else:
                     self.image_loading.emit(False, redraw)
@@ -409,8 +1805,9 @@ class Canvas(QtWidgets.QGraphicsScene):
                         else:
                             qt_image = QtGui.QImage(array.data, array.shape[1], array.shape[0], bpl, QtGui.QImage.Format.Format_RGB888)
                     self.pixmap = QtGui.QPixmap.fromImage(qt_image)
-                    self.addPixmap(self.pixmap)
-                self.display_external_annotations(file_name)
+                    image_item: QtWidgets.QGraphicsPixmapItem = self.addPixmap(self.pixmap)
+                    image_item.setZValue(-10.0)
+                self.display_external_annotations(file_name, refresh_points=False)
                 self.display_grid()
                 self.display_points()
             except FileNotFoundError:
@@ -505,24 +1902,58 @@ class Canvas(QtWidgets.QGraphicsScene):
         if len(self.redo_queue) > 0:
             event = self.redo_queue.pop()
             if event[0] == 'add':
-                self.points[self.current_image_name][event[1]].append(event[2])
-                self.update_point_count.emit(self.current_image_name, event[1], len(self.points[self.current_image_name][event[1]]))
-                self.display_points()
+                image_name: str = event[1]
+                class_name: str = event[2]
+                point: QtCore.QPointF = event[3]
+                self.points[image_name][class_name].append(point)
+                self.update_point_count.emit(
+                    image_name, class_name, len(self.points[image_name][class_name])
+                )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.undo_queue.append(event)
             elif event[0] == 'delete':
-                for class_name, point in event[2]:
-                    self.points[self.current_image_name][class_name].remove(point)
-                    self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
-                self.display_points()
+                image_name = event[1]
+                selection = event[2]
+                for class_name, point in selection:
+                    self.points[image_name][class_name].remove(point)
+                    self.update_point_count.emit(
+                        image_name,
+                        class_name,
+                        len(self.points[image_name][class_name]),
+                    )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.undo_queue.append(event)
             elif event[0] == 'relabel':
-                for class_name, point in event[2]:
-                    self.points[self.current_image_name][class_name].remove(point)
-                    self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
-                    self.points[self.current_image_name][event[1]].append(point)
-                self.update_point_count.emit(self.current_image_name, event[1], len(self.points[self.current_image_name][event[1]]))
-                self.display_points()
+                image_name = event[1]
+                target_class_name: str = event[2]
+                selection = event[3]
+                for class_name, point in selection:
+                    self.points[image_name][class_name].remove(point)
+                    self.update_point_count.emit(
+                        image_name,
+                        class_name,
+                        len(self.points[image_name][class_name]),
+                    )
+                    if target_class_name not in self.points[image_name]:
+                        self.points[image_name][target_class_name] = []
+                    self.points[image_name][target_class_name].append(point)
+                self.update_point_count.emit(
+                    image_name,
+                    target_class_name,
+                    len(self.points[image_name][target_class_name]),
+                )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.undo_queue.append(event)
+            elif event[0] == 'annotation_json':
+                if self._apply_annotation_history_snapshot(
+                    event[1], event[3], event[5]
+                ):
+                    self.undo_queue.append(event)
+                else:
+                    self.redo_queue.append(event)
 
     def redraw_image(self):
         if self.directory != '':
@@ -530,7 +1961,15 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def relabel_selected_points(self):
         if self.current_class_name is not None:
-            self.undo_queue.append(('relabel', self.current_class_name, self.selection))
+            self.undo_queue.append(
+                (
+                    'relabel',
+                    self.current_image_name,
+                    self.current_class_name,
+                    list(self.selection),
+                )
+            )
+            self.redo_queue = []
             for class_name, point in self.selection:
                 # Remove original point
                 self.points[self.current_image_name][class_name].remove(point)
@@ -572,6 +2011,12 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.undo_queue = []
         self.coordinates = {}
         self.custom_fields = {'fields': [], 'data': {}}
+        self.external_annotations = []
+        self.external_annotation_document = None
+        self.external_annotation_items = []
+        self.external_annotation_handle_items = []
+        self.selected_external_annotation_index = None
+        self.count_region_mask_item = None
 
         self.clear()
         self.directory = ''
@@ -648,7 +2093,17 @@ class Canvas(QtWidgets.QGraphicsScene):
             for point in current[class_name]:
                 if rect.contains(point):
                     offset = ((display_radius + 6) // 2)
-                    self.addEllipse(QtCore.QRectF(point.x() - offset, point.y() - offset, display_radius + 6, display_radius + 6), self.selected_pen)
+                    selected_item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
+                        QtCore.QRectF(
+                            point.x() - offset,
+                            point.y() - offset,
+                            display_radius + 6,
+                            display_radius + 6,
+                        ),
+                        self.selected_pen,
+                    )
+                    selected_item.setData(0, "ddg_selected_bird_point")
+                    selected_item.setZValue(1.5)
                     self.selection.append((class_name, point))
 
     def set_current_class(self, class_index):
@@ -683,6 +2138,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.clear_grid()
 
     def toggle_points(self, display):
+        self.show_points = bool(display)
         if display:
             self.display_points()
             self.selection = []
@@ -693,24 +2149,60 @@ class Canvas(QtWidgets.QGraphicsScene):
         if len(self.undo_queue) > 0:
             event = self.undo_queue.pop()
             if event[0] == 'add':
-                self.points[self.current_image_name][event[1]].remove(event[2])
-                self.update_point_count.emit(self.current_image_name, event[1], len(self.points[self.current_image_name][event[1]]))
-                self.display_points()
+                image_name: str = event[1]
+                class_name: str = event[2]
+                point: QtCore.QPointF = event[3]
+                self.points[image_name][class_name].remove(point)
+                self.update_point_count.emit(
+                    image_name, class_name, len(self.points[image_name][class_name])
+                )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.redo_queue.append(event)
             elif event[0] == 'delete':
-                for class_name, point in event[2]:
-                    self.points[self.current_image_name][class_name].append(point)
-                    self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
-                self.display_points()
+                image_name = event[1]
+                selection = event[2]
+                for class_name, point in selection:
+                    if class_name not in self.points[image_name]:
+                        self.points[image_name][class_name] = []
+                    self.points[image_name][class_name].append(point)
+                    self.update_point_count.emit(
+                        image_name,
+                        class_name,
+                        len(self.points[image_name][class_name]),
+                    )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.redo_queue.append(event)
             elif event[0] == 'relabel':
-                for class_name, point in event[2]:
-                    self.points[self.current_image_name][event[1]].remove(point)
-                    self.update_point_count.emit(self.current_image_name, event[1], len(self.points[self.current_image_name][event[1]]))
-                    self.points[self.current_image_name][class_name].append(point)
-                    self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
-                self.display_points()
+                image_name = event[1]
+                target_class_name: str = event[2]
+                selection = event[3]
+                for class_name, point in selection:
+                    self.points[image_name][target_class_name].remove(point)
+                    self.update_point_count.emit(
+                        image_name,
+                        target_class_name,
+                        len(self.points[image_name][target_class_name]),
+                    )
+                    if class_name not in self.points[image_name]:
+                        self.points[image_name][class_name] = []
+                    self.points[image_name][class_name].append(point)
+                    self.update_point_count.emit(
+                        image_name,
+                        class_name,
+                        len(self.points[image_name][class_name]),
+                    )
+                if self.current_image_name == image_name:
+                    self.display_points()
                 self.redo_queue.append(event)
+            elif event[0] == 'annotation_json':
+                if self._apply_annotation_history_snapshot(
+                    event[1], event[2], event[4]
+                ):
+                    self.redo_queue.append(event)
+                else:
+                    self.undo_queue.append(event)
 
     def update_survey_id(self, text):
         self.survey_id = text
