@@ -39,6 +39,14 @@ class InteractionMode(str, Enum):
     POLYGON = "polygon"
 
 
+class NavigationOverride(str, Enum):
+    """Temporary ArcGIS-style navigation overrides."""
+
+    PAN = "pan"
+    ZOOM_IN = "zoom_in"
+    ZOOM_OUT = "zoom_out"
+
+
 class CentralGraphicsView(QtWidgets.QGraphicsView):
     add_point = QtCore.pyqtSignal(QtCore.QPointF)
     drop_complete = QtCore.pyqtSignal(list)
@@ -84,7 +92,19 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.dragging_annotation_index: int | None = None
         self.dragging_annotation_changed: bool = False
         self.dragging_annotation_last_point: QtCore.QPointF | None = None
-        self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.navigation_keys_down: list[NavigationOverride] = []
+        self.navigation_gesture: NavigationOverride | None = None
+        self.navigation_press_position: QtCore.QPoint | None = None
+        self.zoom_rubber_band: QtWidgets.QRubberBand = QtWidgets.QRubberBand(
+            QtWidgets.QRubberBand.Shape.Rectangle, self.viewport()
+        )
+        self.count_click_press_position: QtCore.QPoint | None = None
+        self.count_click_scene_point: QtCore.QPointF | None = None
+        self.count_click_moved: bool = False
+        self.count_click_threshold_px: int = 4
+        self.setViewportUpdateMode(
+            QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate
+        )
 
     def enterEvent(self, event: QtCore.QEvent) -> None:
         self.setFocus()
@@ -93,9 +113,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """Clear cached modifier state when the view loses focus.
 
         Modal dialogs can receive focus before key-release events return to the
-        graphics view. Clearing the cached state prevents a stale Ctrl or Shift
-        flag from leaking into later keyboard behavior. Mouse actions use the
-        modifiers attached to each mouse event directly.
+        graphics view. Clearing cached modifier and C/Z/X navigation state
+        prevents a stale key from leaking into later mouse behavior.
 
         Args:
             event: Qt focus-out event.
@@ -103,6 +122,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.ctrl = False
         self.shift = False
         self.alt = False
+        self._clear_navigation_state()
+        self._cancel_pending_count_click()
         super().focusOutEvent(event)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
@@ -123,6 +144,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     def cancel_annotation(self) -> None:
         """Cancel any annotation interaction and return to count mode."""
         was_selection_mode: bool = self.interaction_mode is InteractionMode.SELECT
+        self._cancel_pending_count_click()
         self._clear_line_preview()
         self._clear_polygon_preview()
         self.line_points = []
@@ -153,6 +175,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.dragging_annotation_index = None
         self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
+        self._clear_navigation_state()
+        self._cancel_pending_count_click()
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
@@ -173,6 +197,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.dragging_annotation_index = None
         self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
+        self._clear_navigation_state()
+        self._cancel_pending_count_click()
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
@@ -236,8 +262,262 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.interaction_mode = InteractionMode.POLYGON
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
+    @staticmethod
+    def _navigation_override_for_key(key: int) -> NavigationOverride | None:
+        """Map a keyboard key to its temporary navigation override.
+
+        Args:
+            key: Qt key code.
+
+        Returns:
+            Navigation override for C, Z, or X; otherwise ``None``.
+        """
+        mapping: dict[int, NavigationOverride] = {
+            int(QtCore.Qt.Key.Key_C): NavigationOverride.PAN,
+            int(QtCore.Qt.Key.Key_Z): NavigationOverride.ZOOM_IN,
+            int(QtCore.Qt.Key.Key_X): NavigationOverride.ZOOM_OUT,
+        }
+        return mapping.get(int(key))
+
+    def _active_navigation_override(self) -> NavigationOverride | None:
+        """Return the most recently pressed temporary navigation key."""
+        if not self.navigation_keys_down:
+            return None
+        return self.navigation_keys_down[-1]
+
+    def _push_navigation_override(self, override: NavigationOverride) -> None:
+        """Activate a temporary navigation override until its key is released.
+
+        Args:
+            override: Navigation operation associated with the pressed key.
+        """
+        self.navigation_keys_down = [
+            item for item in self.navigation_keys_down if item is not override
+        ]
+        self.navigation_keys_down.append(override)
+        self._cancel_pending_count_click()
+        self._update_navigation_cursor()
+
+    def _release_navigation_override(self, override: NavigationOverride) -> None:
+        """Release one temporary navigation override.
+
+        Args:
+            override: Navigation operation associated with the released key.
+        """
+        self.navigation_keys_down = [
+            item for item in self.navigation_keys_down if item is not override
+        ]
+        self._update_navigation_cursor()
+
+    def _update_navigation_cursor(self) -> None:
+        """Update the viewport cursor for the current navigation override."""
+        override: NavigationOverride | None = self._active_navigation_override()
+        if self.navigation_gesture is NavigationOverride.PAN:
+            self.viewport().setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+        elif override is NavigationOverride.PAN:
+            self.viewport().setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        elif override in {NavigationOverride.ZOOM_IN, NavigationOverride.ZOOM_OUT}:
+            self.viewport().setCursor(QtCore.Qt.CursorShape.CrossCursor)
+        else:
+            self.viewport().unsetCursor()
+
+    def _cancel_navigation_gesture(self) -> None:
+        """Cancel the active mouse gesture but preserve held navigation keys."""
+        self.navigation_gesture = None
+        self.navigation_press_position = None
+        self.zoom_rubber_band.hide()
+        self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        self._update_navigation_cursor()
+
+    def _clear_navigation_state(self) -> None:
+        """Cancel temporary navigation state without changing annotation mode."""
+        self.navigation_keys_down = []
+        self._cancel_navigation_gesture()
+        self.viewport().unsetCursor()
+
+    def _start_navigation_gesture(
+        self, event: QtGui.QMouseEvent, override: NavigationOverride
+    ) -> None:
+        """Start a C/Z/X mouse gesture.
+
+        Args:
+            event: Mouse press event that begins the gesture.
+            override: Active temporary navigation operation.
+        """
+        self.navigation_gesture = override
+        self.navigation_press_position = event.position().toPoint()
+        self._cancel_pending_count_click()
+        if override is NavigationOverride.PAN:
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+            QtWidgets.QGraphicsView.mousePressEvent(self, event)
+        else:
+            origin: QtCore.QPoint = self.navigation_press_position
+            self.zoom_rubber_band.setGeometry(QtCore.QRect(origin, origin))
+            self.zoom_rubber_band.show()
+            event.accept()
+        self._update_navigation_cursor()
+
+    def _update_navigation_gesture(self, event: QtGui.QMouseEvent) -> bool:
+        """Update an active temporary navigation gesture.
+
+        Args:
+            event: Mouse move event.
+
+        Returns:
+            ``True`` when the event was consumed by navigation.
+        """
+        if self.navigation_gesture is None:
+            return False
+        if self.navigation_gesture is NavigationOverride.PAN:
+            QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
+        elif self.navigation_press_position is not None:
+            rectangle: QtCore.QRect = QtCore.QRect(
+                self.navigation_press_position, event.position().toPoint()
+            ).normalized()
+            self.zoom_rubber_band.setGeometry(rectangle)
+            event.accept()
+        return True
+
+    def _finish_navigation_gesture(self, event: QtGui.QMouseEvent) -> bool:
+        """Finish a temporary C/Z/X navigation gesture.
+
+        Args:
+            event: Mouse release event.
+
+        Returns:
+            ``True`` when the event was consumed by navigation.
+        """
+        override: NavigationOverride | None = self.navigation_gesture
+        if override is None or event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return False
+
+        if override is NavigationOverride.PAN:
+            QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        else:
+            origin: QtCore.QPoint | None = self.navigation_press_position
+            self.zoom_rubber_band.hide()
+            if origin is not None:
+                rectangle: QtCore.QRect = QtCore.QRect(
+                    origin, event.position().toPoint()
+                ).normalized()
+                self._apply_zoom_rectangle(
+                    rectangle, zoom_in=override is NavigationOverride.ZOOM_IN
+                )
+            event.accept()
+
+        self.navigation_gesture = None
+        self.navigation_press_position = None
+        self._update_navigation_cursor()
+        return True
+
+    def _apply_zoom_rectangle(self, rectangle: QtCore.QRect, zoom_in: bool) -> None:
+        """Apply a rectangle zoom without changing the current interaction tool.
+
+        Args:
+            rectangle: Drag rectangle in viewport coordinates.
+            zoom_in: ``True`` for Z-drag zoom in, ``False`` for X-drag zoom out.
+        """
+        if rectangle.width() < 4 or rectangle.height() < 4:
+            return
+        if self.scene() is None or not self.scene().items():
+            return
+
+        scene_rectangle: QtCore.QRectF = self.mapToScene(rectangle).boundingRect()
+        if zoom_in:
+            if scene_rectangle.width() <= 0.0 or scene_rectangle.height() <= 0.0:
+                return
+            self.fitInView(
+                scene_rectangle, QtCore.Qt.AspectRatioMode.KeepAspectRatio
+            )
+        else:
+            viewport_rectangle: QtCore.QRect = self.viewport().rect()
+            if viewport_rectangle.width() <= 0 or viewport_rectangle.height() <= 0:
+                return
+            factor: float = max(
+                rectangle.width() / viewport_rectangle.width(),
+                rectangle.height() / viewport_rectangle.height(),
+            )
+            factor = max(0.1, min(1.0, factor))
+            if factor >= 1.0:
+                return
+            center: QtCore.QPointF = self.mapToScene(rectangle.center())
+            self.scale(factor, factor)
+            self.centerOn(center)
+        self.repaint()
+
+    def _cancel_pending_count_click(self) -> None:
+        """Clear an unfinished click-to-add count-point gesture."""
+        self.count_click_press_position = None
+        self.count_click_scene_point = None
+        self.count_click_moved = False
+
+    def _start_pending_count_click(self, event: QtGui.QMouseEvent) -> None:
+        """Record a possible click-to-add point gesture.
+
+        Args:
+            event: Left-button press in normal count mode.
+        """
+        self.count_click_press_position = event.position().toPoint()
+        self.count_click_scene_point = self.mapToScene(event.position().toPoint())
+        self.count_click_moved = False
+        event.accept()
+
+    def _update_pending_count_click(self, event: QtGui.QMouseEvent) -> bool:
+        """Track mouse movement so a drag is never mistaken for a point click.
+
+        Args:
+            event: Mouse move event.
+
+        Returns:
+            ``True`` when a pending count click consumed the event.
+        """
+        origin: QtCore.QPoint | None = self.count_click_press_position
+        if origin is None:
+            return False
+        if event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            delta: QtCore.QPoint = event.position().toPoint() - origin
+            if delta.manhattanLength() > self.count_click_threshold_px:
+                self.count_click_moved = True
+        event.accept()
+        return True
+
+    def _finish_pending_count_click(self, event: QtGui.QMouseEvent) -> bool:
+        """Emit a count point only for a true click rather than a drag.
+
+        Args:
+            event: Mouse release event.
+
+        Returns:
+            ``True`` when a pending count gesture consumed the event.
+        """
+        if (
+            self.count_click_press_position is None
+            or event.button() != QtCore.Qt.MouseButton.LeftButton
+        ):
+            return False
+        point: QtCore.QPointF | None = self.count_click_scene_point
+        origin: QtCore.QPoint = self.count_click_press_position
+        release_delta: QtCore.QPoint = event.position().toPoint() - origin
+        moved: bool = (
+            self.count_click_moved
+            or release_delta.manhattanLength() > self.count_click_threshold_px
+        )
+        self._cancel_pending_count_click()
+        event.accept()
+        if not moved and point is not None:
+            self.add_point.emit(QtCore.QPointF(point))
+        return True
+
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key.Key_Escape:
+            if self.navigation_gesture is not None:
+                # Cancel the temporary navigation gesture without discarding an
+                # unfinished annotation. The held C/Z/X override remains active
+                # until its key is released.
+                self._cancel_navigation_gesture()
+                event.accept()
+                return
             self.cancel_annotation()
             return
         if (
@@ -249,6 +529,19 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             else:
                 self.finish_polygon_annotation()
             return
+
+        navigation_override: NavigationOverride | None = (
+            self._navigation_override_for_key(event.key())
+        )
+        if (
+            navigation_override is not None
+            and event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier
+        ):
+            if not event.isAutoRepeat():
+                self._push_navigation_override(navigation_override)
+            event.accept()
+            return
+
         if event.key() == QtCore.Qt.Key.Key_Alt:
             self.alt = True
         elif event.key() == QtCore.Qt.Key.Key_Control:
@@ -295,6 +588,14 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.switch_class.emit(9)
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
+        navigation_override: NavigationOverride | None = (
+            self._navigation_override_for_key(event.key())
+        )
+        if navigation_override is not None:
+            if not event.isAutoRepeat():
+                self._release_navigation_override(navigation_override)
+            event.accept()
+            return
         if event.key() == QtCore.Qt.Key.Key_Alt:
             self.alt = False
         elif event.key() == QtCore.Qt.Key.Key_Control:
@@ -304,6 +605,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
 
     def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
         """Finish a line or polygon on a left-button double-click."""
+        if self._active_navigation_override() is not None:
+            event.accept()
+            return
         if (
             self.interaction_mode in {InteractionMode.LINE, InteractionMode.POLYGON}
             and event.button() == QtCore.Qt.MouseButton.LeftButton
@@ -317,6 +621,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._update_navigation_gesture(event):
+            return
+        if self._update_pending_count_click(event):
+            return
         if (
             self.interaction_mode is InteractionMode.SELECT
             and self.dragging_annotation_vertex is not None
@@ -357,6 +665,16 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        navigation_override: NavigationOverride | None = (
+            self._active_navigation_override()
+        )
+        if (
+            navigation_override is not None
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            self._start_navigation_gesture(event, navigation_override)
+            return
+
         if self.interaction_mode is InteractionMode.SELECT:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 item: QtWidgets.QGraphicsItem | None = self.itemAt(
@@ -413,33 +731,31 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 self._add_polygon_vertex(self.mapToScene(event.position().toPoint()))
                 event.accept()
             return
-        modifiers: QtCore.Qt.KeyboardModifier = event.modifiers()
-        ctrl_pressed: bool = bool(
-            modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
-        )
-        shift_pressed: bool = bool(
-            modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier
-        )
 
+        shift_pressed: bool = bool(
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        )
         if (
-            ctrl_pressed
-            and event.button() == QtCore.Qt.MouseButton.LeftButton
-        ):
-            self.add_point.emit(
-                self.mapToScene(event.position().toPoint())
-            )
-            event.accept()
-        elif (
             shift_pressed
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
+            self._cancel_pending_count_click()
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
-        else:
-            self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
-            QtWidgets.QGraphicsView.mousePressEvent(self, event)
+            return
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            # Plain click is the primary count action. Ctrl+click remains a
+            # harmless compatibility alias because Ctrl does not change this
+            # branch; C/Z/X are the explicit navigation overrides.
+            self._start_pending_count_click(event)
+            return
+        QtWidgets.QGraphicsView.mousePressEvent(self, event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._finish_navigation_gesture(event):
+            return
+        if self._finish_pending_count_click(event):
+            return
         if (
             self.interaction_mode is InteractionMode.SELECT
             and self.dragging_annotation_vertex is not None
@@ -472,10 +788,13 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
             return
         if self.dragMode() == QtWidgets.QGraphicsView.DragMode.RubberBandDrag:
-            rect = self.rubberBandRect()
+            rect: QtCore.QRect = self.rubberBandRect()
             self.region_selected.emit(self.mapToScene(rect).boundingRect())
             QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
+            self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+            return
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
+        QtWidgets.QGraphicsView.mouseReleaseEvent(self, event)
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
         """Offer vertex-edit operations while annotation selection is active.

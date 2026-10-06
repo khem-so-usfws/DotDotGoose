@@ -241,32 +241,36 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Annotation edit: drag a shape to move it; drag a vertex "
                     "handle to reshape it; right-click a shape/vertex for insert "
                     "or delete; locked annotations can be selected but not "
-                    "moved; Ctrl+Z/Ctrl+Y undo/redo; Esc exits edit mode."
+                    "moved; C+drag pans; Z/X+drag zoom; Ctrl+Z/Ctrl+Y "
+                    "undo/redo; Esc exits edit mode."
                 )
             )
         elif mode == "point":
             self.statusBar().showMessage(
-                self.tr("Landmark point: click once to place; Esc to cancel.")
+                self.tr(
+                    "Landmark point: click once to place; C+drag pans; "
+                    "Z/X+drag zoom; Esc to cancel."
+                )
             )
         elif mode == "line":
             self.statusBar().showMessage(
                 self.tr(
-                    "Cutline: click vertices; Enter or double-click to finish; "
-                    "Esc to cancel."
+                    "Cutline: click vertices; C+drag pans; Z/X+drag zoom; "
+                    "Enter or double-click to finish; Esc to cancel."
                 )
             )
         elif mode == "polygon":
             self.statusBar().showMessage(
                 self.tr(
-                    "Count-region polygon: click vertices; Enter or double-click "
-                    "to finish; Esc to cancel."
+                    "Count-region polygon: click vertices; C+drag pans; "
+                    "Z/X+drag zoom; Enter or double-click to finish; Esc to cancel."
                 )
             )
         else:
             self.statusBar().showMessage(
                 self.tr(
-                    "Count mode: Ctrl+click adds a point; drag pans; "
-                    "Shift+drag selects points."
+                    "Count mode: click adds a point; Shift+drag selects points; "
+                    "C+drag pans; Z+drag zooms in; X+drag zooms out."
                 )
             )
 
@@ -274,14 +278,18 @@ class MainWindow(QtWidgets.QMainWindow):
         """Show concise built-in help for native annotation controls."""
         help_text: str = self.tr(
             "Normal counting\n"
-            "  Ctrl+click: add point\n"
-            "  Drag: pan image\n"
-            "  Shift+drag: select points\n\n"
+            "  Click: add point in the selected class\n"
+            "  Shift+drag: select points\n"
+            "  C+drag: temporarily pan\n"
+            "  Z+drag: rectangle zoom in\n"
+            "  X+drag: rectangle zoom out\n"
+            "  Mouse wheel: incremental zoom\n\n"
             "Native annotations\n"
             "  Landmark: one point\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
             "  Count region: click vertices, Enter/double-click to finish\n"
             "  Select/Edit: drag shapes or vertices; right-click for vertex edits\n"
+            "  C/Z/X navigation overrides also work while annotating\n"
             "  Ctrl+Z/Ctrl+Y: undo/redo annotation edits\n\n"
             "Count regions\n"
             "  Point centers inside any count_region polygon are valid.\n"

@@ -4,12 +4,17 @@ DotDotGoose can create, edit, and store non-count annotations directly alongside
 
 ## Normal point counting
 
-Native annotations do not change the normal DDG point-counting interaction:
+DDG uses ArcGIS-inspired temporary navigation overrides so ordinary clicking can stay focused on counting:
 
-- **Ctrl+left-click** adds a point for the active class.
-- **Left-drag** pans the image.
+- **Left-click** adds a point for the active class.
 - **Shift+drag** rubber-band selects points.
+- **C+drag** temporarily pans the image.
+- **Z+drag** draws a rectangle and zooms in to it.
+- **X+drag** draws a rectangle and proportionally zooms out around it.
+- **Mouse wheel** performs incremental zoom.
 - DDG count points remain separate from native annotation points.
+
+C, Z, and X are temporary overrides: release the key and the current count or annotation tool resumes. A plain drag without C does not pan and does not add a point.
 
 ## Annotation types
 
@@ -81,7 +86,7 @@ An image with no explicit `count_region` is treated as unrestricted; ordinary DD
 
 ## Files and data safety
 
-Bird-count points remain in the DDG `.pnt` project. Native annotations are stored in a LabelMe-compatible JSON sidecar next to each image:
+DDG count points remain in the DDG `.pnt` project. Native annotations are stored in a LabelMe-compatible JSON sidecar next to each image:
 
 ```text
 IMG_4103.JPG
@@ -128,7 +133,7 @@ Before tagging a release, verify the following with representative operational i
 10. Navigate every outside point with Previous/Next and confirm the image recenters correctly.
 11. Confirm outside-point warning/highlighting preferences work as expected.
 12. Switch rapidly among 10–20 images, including during unfinished annotation drawing and while annotations are selected.
-13. Confirm normal DDG controls remain unchanged: Ctrl+click adds a point, drag pans, Shift+drag selects points.
+13. Confirm navigation/count controls: click adds a point, Shift+drag selects points, C+drag pans, Z+drag zooms in, and X+drag zooms out. Confirm plain drag does not add a point.
 14. Inspect `.json` and `.json.bak` after annotation edits and verify the backup contains the prior live state.
 15. Test a malformed annotation JSON and confirm DDG warns rather than overwriting it.
 16. Save/reopen the `.pnt` project and confirm existing classes, counts, and exports remain intact.

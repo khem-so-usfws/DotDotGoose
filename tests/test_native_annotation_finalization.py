@@ -13,6 +13,9 @@ def test_count_mode_status_uses_generic_point_wording(qtbot) -> None:
     window.annotation_mode_changed("count")
 
     message: str = window.statusBar().currentMessage()
-    assert "Ctrl+click adds a point" in message
+    assert "click adds a point" in message
     assert "Shift+drag selects points" in message
+    assert "C+drag pans" in message
+    assert "Z+drag zooms in" in message
+    assert "X+drag zooms out" in message
     assert "bird" not in message.lower()
