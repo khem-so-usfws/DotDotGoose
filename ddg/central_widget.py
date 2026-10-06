@@ -323,6 +323,28 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return self.reference_canvas, self.reference_graphics_view
         return self.canvas, self.graphicsView
 
+    def _handoff_annotation_tool(self, target_view: CentralGraphicsView) -> None:
+        """Make one compare pane the sole owner of annotation interaction.
+
+        Merely clicking another pane does not discard unfinished annotation
+        work. Starting an annotation tool there, however, is an explicit
+        handoff: any transient drawing/edit state in the other pane is
+        cancelled before the requested tool starts. This keeps Current and
+        Reference from simultaneously remaining in independent annotation
+        modes and removes the need for a manual Cancel Annotation step.
+
+        Args:
+            target_view: Graphics view that is about to start an annotation
+                tool.
+        """
+        other_view: CentralGraphicsView = (
+            self.reference_graphics_view
+            if target_view is self.graphicsView
+            else self.graphicsView
+        )
+        if other_view.interaction_mode.value != "count":
+            other_view.cancel_annotation()
+
     def undo_active_viewer(self) -> None:
         """Undo in the viewer that currently owns focus."""
         canvas, _view = self._active_annotation_context()
@@ -540,6 +562,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 self.tr("Load an image before editing annotations."),
             )
             return False
+        self._handoff_annotation_tool(view)
         view.start_annotation_selection()
         return True
 
@@ -659,6 +682,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 self.tr("Load an image before drawing a landmark."),
             )
             return False
+        self._handoff_annotation_tool(view)
         view.start_landmark_annotation()
         return True
 
@@ -672,6 +696,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 self.tr("Load an image before drawing a cutline."),
             )
             return False
+        self._handoff_annotation_tool(view)
         view.start_line_annotation()
         return True
 
@@ -685,6 +710,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 self.tr("Load an image before drawing a count region."),
             )
             return False
+        self._handoff_annotation_tool(view)
         view.start_polygon_annotation()
         return True
 

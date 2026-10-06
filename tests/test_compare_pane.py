@@ -195,3 +195,59 @@ def test_reference_pane_can_create_native_annotation(qtbot, tmp_path: Path) -> N
     assert len(shapes) == 1
     assert shapes[0]["label"] == "landmark"
     assert shapes[0]["shape_type"] == "point"
+
+
+def test_starting_cutline_in_other_pane_hands_off_annotation_tool(
+    qtbot, tmp_path: Path
+) -> None:
+    """Starting a tool in the other pane should cancel the first pane's tool."""
+    first: Path = tmp_path / "IMG_6001.JPG"
+    second: Path = tmp_path / "IMG_6002.JPG"
+    _write_image(first)
+    _write_image(second)
+
+    widget: CentralWidget = CentralWidget()
+    qtbot.addWidget(widget)
+    widget.canvas.directory = str(tmp_path)
+    widget.canvas.points = {first.name: {}, second.name: {}}
+    widget.canvas.load_image(str(first))
+    widget.set_compare_enabled(True)
+
+    widget._set_last_active_view("current")
+    assert widget.start_cutline() is True
+    widget.graphicsView.line_points = [QtCore.QPointF(5.0, 5.0)]
+    assert widget.graphicsView.interaction_mode.value == "line"
+
+    widget._set_last_active_view("reference")
+    assert widget.start_cutline() is True
+
+    assert widget.graphicsView.interaction_mode.value == "count"
+    assert widget.graphicsView.line_points == []
+    assert widget.reference_graphics_view.interaction_mode.value == "line"
+
+
+def test_annotation_tool_handoff_works_back_to_current(qtbot, tmp_path: Path) -> None:
+    """Tool ownership should transfer from Reference back to Current as well."""
+    first: Path = tmp_path / "IMG_7001.JPG"
+    second: Path = tmp_path / "IMG_7002.JPG"
+    _write_image(first)
+    _write_image(second)
+
+    widget: CentralWidget = CentralWidget()
+    qtbot.addWidget(widget)
+    widget.canvas.directory = str(tmp_path)
+    widget.canvas.points = {first.name: {}, second.name: {}}
+    widget.canvas.load_image(str(first))
+    widget.set_compare_enabled(True)
+
+    widget._set_last_active_view("reference")
+    assert widget.start_count_region_polygon() is True
+    widget.reference_graphics_view.polygon_points = [QtCore.QPointF(4.0, 4.0)]
+    assert widget.reference_graphics_view.interaction_mode.value == "polygon"
+
+    widget._set_last_active_view("current")
+    assert widget.start_annotation_selection() is True
+
+    assert widget.reference_graphics_view.interaction_mode.value == "count"
+    assert widget.reference_graphics_view.polygon_points == []
+    assert widget.graphicsView.interaction_mode.value == "select"
