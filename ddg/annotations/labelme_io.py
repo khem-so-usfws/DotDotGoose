@@ -105,6 +105,7 @@ def replace_labelme_annotations_by_label(
     annotations: list[Annotation],
     image_width: int | None = None,
     image_height: int | None = None,
+    shape_type: AnnotationShape | None = None,
 ) -> Path:
     """Replace all LabelMe shapes with one semantic label.
 
@@ -118,6 +119,8 @@ def replace_labelme_annotations_by_label(
         annotations: Replacement native annotations.
         image_width: Optional source-image width for a new sidecar.
         image_height: Optional source-image height for a new sidecar.
+        shape_type: Optional geometry filter. When supplied, only shapes with
+            both the requested label and geometry type are replaced.
 
     Returns:
         Path to the written LabelMe JSON sidecar.
@@ -133,11 +136,17 @@ def replace_labelme_annotations_by_label(
         )
 
     raw_shapes: list[Any] = _require_shape_list(raw_data)
-    retained_shapes: list[Any] = [
-        raw_shape
-        for raw_shape in raw_shapes
-        if not (isinstance(raw_shape, dict) and raw_shape.get("label") == label)
-    ]
+    retained_shapes: list[Any] = []
+    for raw_shape in raw_shapes:
+        remove_shape: bool = False
+        if isinstance(raw_shape, dict) and raw_shape.get("label") == label:
+            if shape_type is None:
+                remove_shape = True
+            else:
+                raw_shape_type: str = str(raw_shape.get("shape_type", ""))
+                remove_shape = _normalize_shape_type(raw_shape_type) is shape_type
+        if not remove_shape:
+            retained_shapes.append(raw_shape)
 
     for annotation in annotations:
         annotation.source_shape_index = len(retained_shapes)
@@ -187,9 +196,7 @@ def update_labelme_annotation(
     raw_shape["points"] = [[x, y] for x, y in annotation.points]
     raw_shape["group_id"] = annotation.group_id
     raw_shape["flags"] = dict(annotation.flags)
-    raw_shape["shape_type"] = (
-        annotation.source_shape_type or annotation.shape_type.value
-    )
+    raw_shape["shape_type"] = _labelme_shape_type_for_annotation(annotation)
     _write_labelme_root(json_path, raw_data)
     return json_path
 
@@ -364,6 +371,30 @@ def write_labelme_raw_document(
     _write_labelme_root(json_path, raw_data)
     return json_path
 
+def _labelme_shape_type_for_annotation(annotation: Annotation) -> str:
+    """Return a LabelMe-compatible shape type for a native annotation.
+
+    LabelMe's ``line`` primitive requires exactly two points. Native DDG
+    cutlines may contain any number of vertices, so multi-vertex cutlines must
+    be serialized as ``linestrip``. Existing linestrips remain linestrips.
+
+    Args:
+        annotation: Native DDG annotation.
+
+    Returns:
+        LabelMe ``shape_type`` value.
+    """
+    if annotation.shape_type is not AnnotationShape.LINE:
+        return annotation.shape_type.value
+
+    source_type: str = (annotation.source_shape_type or "").strip().lower()
+    if source_type == "linestrip":
+        return "linestrip"
+    if len(annotation.points) == 2:
+        return "line"
+    return "linestrip"
+
+
 def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
     """Convert a native annotation to a LabelMe shape dictionary.
 
@@ -373,7 +404,7 @@ def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
     Returns:
         LabelMe-compatible shape dictionary.
     """
-    shape_type: str = annotation.shape_type.value
+    shape_type: str = _labelme_shape_type_for_annotation(annotation)
     return {
         "label": annotation.label,
         "points": [[x, y] for x, y in annotation.points],
@@ -546,6 +577,7 @@ def _normalize_shape_type(shape_type: str) -> AnnotationShape | None:
         return AnnotationShape.POINT
     if normalized in {"line", "linestrip"}:
         return AnnotationShape.LINE
-    if normalized == "polygon":
+    if normalized in {"", "none", "polygon"}:
+        # LabelMe historically treated a missing/None shape_type as polygon.
         return AnnotationShape.POLYGON
     return None

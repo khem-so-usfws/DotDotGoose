@@ -55,3 +55,20 @@ def test_annotation_lock_state_uses_flags() -> None:
     annotation.set_locked(False)
     assert annotation.locked is False
     assert "ddg_locked" not in annotation.flags
+
+
+def test_annotation_rejects_nonfinite_coordinates() -> None:
+    """Annotations should reject NaN and infinite image coordinates."""
+    with pytest.raises(ValueError, match="finite"):
+        Annotation(
+            label="landmark",
+            shape_type=AnnotationShape.POINT,
+            points=[(float("nan"), 2.0)],
+        )
+
+    with pytest.raises(ValueError, match="finite"):
+        Annotation(
+            label="cutline",
+            shape_type=AnnotationShape.LINE,
+            points=[(1.0, 2.0), (float("inf"), 4.0)],
+        )

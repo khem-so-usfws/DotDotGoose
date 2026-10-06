@@ -1,4 +1,4 @@
-"""Count-region QA dialog with navigation through outside bird points."""
+"""Count-region QA dialog with navigation through outside points."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from PyQt6 import QtCore, QtWidgets
 
 
 class CountRegionQADialog(QtWidgets.QDialog):
-    """Display count-region QA results and navigate outside bird points."""
+    """Display count-region QA results and navigate outside points."""
 
     point_requested = QtCore.pyqtSignal(QtCore.QPointF)
 
@@ -94,7 +94,7 @@ class CountRegionQADialog(QtWidgets.QDialog):
         count: int = len(self._outside_points)
         if count == 0:
             self.point_label.setText(
-                self.tr("No bird points are outside the count region.")
+                self.tr("No points are outside the count region.")
             )
             self.previous_button.setEnabled(False)
             self.next_button.setEnabled(False)

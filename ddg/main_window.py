@@ -265,8 +265,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.statusBar().showMessage(
                 self.tr(
-                    "Count mode: Ctrl+click adds a bird point; drag pans; "
-                    "Shift+drag selects bird points."
+                    "Count mode: Ctrl+click adds a point; drag pans; "
+                    "Shift+drag selects points."
                 )
             )
 
@@ -274,9 +274,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Show concise built-in help for native annotation controls."""
         help_text: str = self.tr(
             "Normal counting\n"
-            "  Ctrl+click: add bird point\n"
+            "  Ctrl+click: add point\n"
             "  Drag: pan image\n"
-            "  Shift+drag: select bird points\n\n"
+            "  Shift+drag: select points\n\n"
             "Native annotations\n"
             "  Landmark: one point\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
@@ -284,7 +284,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Select/Edit: drag shapes or vertices; right-click for vertex edits\n"
             "  Ctrl+Z/Ctrl+Y: undo/redo annotation edits\n\n"
             "Count regions\n"
-            "  Bird-point centers inside any count_region polygon are valid.\n"
+            "  Point centers inside any count_region polygon are valid.\n"
             "  Count Region QA can navigate points outside the valid area."
         )
         QtWidgets.QMessageBox.information(

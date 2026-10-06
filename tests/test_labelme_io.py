@@ -537,3 +537,148 @@ def test_removing_sidecar_keeps_last_live_copy_as_backup(tmp_path: Path) -> None
     backup_path: Path = json_path.with_name(f"{json_path.name}.bak")
     assert not json_path.exists()
     assert json.loads(backup_path.read_text(encoding="utf-8")) == raw_data
+
+
+def test_multivertex_cutline_serializes_as_linestrip(tmp_path: Path) -> None:
+    """LabelMe multi-vertex cutlines must use linestrip, not line."""
+    image_path: Path = tmp_path / "IMG_8000.JPG"
+    image_path.write_bytes(b"")
+    annotation: Annotation = Annotation(
+        label="cutline",
+        shape_type=AnnotationShape.LINE,
+        points=[(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)],
+    )
+
+    json_path: Path = append_labelme_annotation(image_path, annotation)
+
+    raw_data: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], raw_data["shapes"]
+    )
+    assert shapes[0]["shape_type"] == "linestrip"
+
+
+def test_two_vertex_cutline_serializes_as_line(tmp_path: Path) -> None:
+    """A two-vertex cutline remains a valid LabelMe line."""
+    image_path: Path = tmp_path / "IMG_8001.JPG"
+    image_path.write_bytes(b"")
+    annotation: Annotation = Annotation(
+        label="cutline",
+        shape_type=AnnotationShape.LINE,
+        points=[(1.0, 2.0), (3.0, 4.0)],
+    )
+
+    json_path: Path = append_labelme_annotation(image_path, annotation)
+
+    raw_data: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], raw_data["shapes"]
+    )
+    assert shapes[0]["shape_type"] == "line"
+
+
+def test_adding_vertex_converts_existing_line_to_linestrip(tmp_path: Path) -> None:
+    """Editing a two-point LabelMe line to three points should stay compatible."""
+    from ddg.annotations import update_labelme_annotation
+
+    image_path: Path = tmp_path / "IMG_8002.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    json_path.write_text(
+        json.dumps(
+            {
+                "shapes": [
+                    {
+                        "label": "cutline",
+                        "points": [[1, 2], [3, 4]],
+                        "shape_type": "line",
+                        "group_id": None,
+                        "flags": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+    assert document is not None
+    annotation: Annotation = document.annotations[0]
+    annotation.points.append((5.0, 6.0))
+
+    update_labelme_annotation(image_path, annotation)
+
+    saved: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
+    assert shapes[0]["shape_type"] == "linestrip"
+
+
+def test_replace_count_regions_preserves_same_label_nonpolygon(tmp_path: Path) -> None:
+    """Whole-image replacement should only replace polygon count regions."""
+    from ddg.annotations import replace_labelme_annotations_by_label
+
+    image_path: Path = tmp_path / "IMG_8003.JPG"
+    json_path: Path = image_path.with_suffix(".json")
+    json_path.write_text(
+        json.dumps(
+            {
+                "shapes": [
+                    {
+                        "label": "count_region",
+                        "points": [[1, 2], [3, 4]],
+                        "shape_type": "line",
+                    },
+                    {
+                        "label": "count_region",
+                        "points": [[0, 0], [10, 0], [10, 10]],
+                        "shape_type": "polygon",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    replacement: Annotation = Annotation(
+        label="count_region",
+        shape_type=AnnotationShape.POLYGON,
+        points=[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+    )
+
+    replace_labelme_annotations_by_label(
+        image_path=image_path,
+        label="count_region",
+        annotations=[replacement],
+        shape_type=AnnotationShape.POLYGON,
+    )
+
+    saved: dict[str, object] = json.loads(json_path.read_text(encoding="utf-8"))
+    shapes: list[dict[str, object]] = cast(
+        list[dict[str, object]], saved["shapes"]
+    )
+    assert len(shapes) == 2
+    assert shapes[0]["shape_type"] == "line"
+    assert shapes[1]["shape_type"] == "polygon"
+
+
+def test_missing_shape_type_loads_as_legacy_polygon(tmp_path: Path) -> None:
+    """Legacy LabelMe shapes without shape_type should default to polygon."""
+    image_path: Path = tmp_path / "IMG_8004.JPG"
+    image_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "shapes": [
+                    {
+                        "label": "count_region",
+                        "points": [[0, 0], [10, 0], [10, 10]],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    document: LabelMeDocument | None = load_labelme_document(image_path)
+
+    assert document is not None
+    assert len(document.annotations) == 1
+    assert document.annotations[0].shape_type is AnnotationShape.POLYGON

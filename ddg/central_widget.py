@@ -414,10 +414,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         dialog.exec()
 
     def _center_on_count_region_qa_point(self, point: QtCore.QPointF) -> None:
-        """Center the image viewer on one outside-region bird point.
+        """Center the image viewer on one outside-region point.
 
         Args:
-            point: Bird point in source-image pixel coordinates.
+            point: Point in source-image pixel coordinates.
         """
         self.graphicsView.centerOn(point)
 

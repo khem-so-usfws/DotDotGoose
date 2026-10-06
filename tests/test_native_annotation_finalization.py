@@ -1,0 +1,18 @@
+"""Regression tests for native-annotation v1 user-facing behavior."""
+
+from __future__ import annotations
+
+from ddg.main_window import MainWindow
+
+
+def test_count_mode_status_uses_generic_point_wording(qtbot) -> None:
+    """The count-mode reminder should describe generic DDG points."""
+    window: MainWindow = MainWindow()
+    qtbot.addWidget(window)
+
+    window.annotation_mode_changed("count")
+
+    message: str = window.statusBar().currentMessage()
+    assert "Ctrl+click adds a point" in message
+    assert "Shift+drag selects points" in message
+    assert "bird" not in message.lower()

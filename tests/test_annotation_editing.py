@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtWidgets
 
 from ddg import Canvas
 from ddg.annotations import AnnotationShape
@@ -306,3 +306,186 @@ def test_annotation_properties_persist_label_and_lock(qtbot, tmp_path: Path) -> 
     flags: dict[str, object] = cast(dict[str, object], shapes[0]["flags"])
     assert flags["ddg_locked"] is True
     assert canvas.external_annotations[0].locked is True
+
+
+def test_new_count_region_refreshes_existing_point_warnings(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """Creating a count region should immediately redraw point QA graphics."""
+    canvas: Canvas = Canvas()
+    canvas.directory = str(tmp_path)
+    canvas.current_image_name = "IMG_8100.JPG"
+    canvas.points = {"IMG_8100.JPG": {}}
+    calls: list[bool] = []
+    monkeypatch.setattr(canvas, "display_points", lambda: calls.append(True))
+
+    canvas.add_polygon_annotation(
+        [
+            QtCore.QPointF(0.0, 0.0),
+            QtCore.QPointF(100.0, 0.0),
+            QtCore.QPointF(100.0, 100.0),
+        ]
+    )
+
+    assert calls == [True]
+
+
+def test_annotation_history_snapshot_omits_embedded_image_data(
+    qtbot, tmp_path: Path
+) -> None:
+    """Undo history should not retain a base64 image copy for every edit."""
+    image_path: Path = tmp_path / "IMG_8200.JPG"
+    image_path.write_bytes(b"")
+    embedded_data: str = "A" * 100_000
+    raw_data: dict[str, Any] = {
+        "imageData": embedded_data,
+        "shapes": [
+            {
+                "label": "count_region",
+                "points": [[0, 0], [10, 0], [10, 10]],
+                "shape_type": "polygon",
+                "flags": {},
+            }
+        ],
+    }
+    image_path.with_suffix(".json").write_text(
+        json.dumps(raw_data), encoding="utf-8"
+    )
+    canvas: Canvas = Canvas()
+
+    snapshot: dict[str, Any] | None = canvas._annotation_history_snapshot(
+        str(image_path)
+    )
+
+    assert snapshot is not None
+    assert snapshot["imageData"] is None
+    assert embedded_data not in json.dumps(snapshot)
+
+
+def test_annotation_history_restore_preserves_live_embedded_image_data(
+    qtbot, tmp_path: Path
+) -> None:
+    """Undo/redo restoration should keep LabelMe imageData unchanged."""
+    image_path: Path = tmp_path / "IMG_8201.JPG"
+    image_path.write_bytes(b"")
+    embedded_data: str = "B" * 10_000
+    raw_data: dict[str, Any] = {
+        "imageData": embedded_data,
+        "shapes": [
+            {
+                "label": "count_region",
+                "points": [[0, 0], [10, 0], [10, 10]],
+                "shape_type": "polygon",
+                "flags": {},
+            }
+        ],
+    }
+    image_path.with_suffix(".json").write_text(
+        json.dumps(raw_data), encoding="utf-8"
+    )
+    canvas: Canvas = Canvas()
+    canvas.directory = str(tmp_path)
+    canvas.current_image_name = image_path.name
+    snapshot: dict[str, Any] | None = canvas._annotation_history_snapshot(
+        str(image_path)
+    )
+    assert snapshot is not None
+
+    restored: bool = canvas._apply_annotation_history_snapshot(
+        str(image_path), snapshot, None
+    )
+
+    saved: dict[str, Any] = json.loads(
+        image_path.with_suffix(".json").read_text(encoding="utf-8")
+    )
+    assert restored is True
+    assert saved["imageData"] == embedded_data
+
+
+def test_failed_annotation_history_restore_keeps_undo_event(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    """A failed undo write should remain available for a later retry."""
+    image_path: Path = tmp_path / "IMG_8202.JPG"
+    image_path.write_bytes(b"")
+    _write_polygon_sidecar(image_path)
+    canvas: Canvas = Canvas()
+    canvas.directory = str(tmp_path)
+    canvas.current_image_name = image_path.name
+    canvas.display_external_annotations(str(image_path))
+    canvas.move_external_annotation(0, QtCore.QPointF(10.0, 0.0))
+    canvas.finish_external_annotation_move(0)
+    assert len(canvas.undo_queue) == 1
+
+    monkeypatch.setattr(
+        "ddg.canvas.write_labelme_raw_document",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk failure")),
+    )
+    monkeypatch.setattr(
+        "ddg.canvas.QtWidgets.QMessageBox.critical",
+        lambda *args, **kwargs: None,
+    )
+
+    canvas.undo()
+
+    assert len(canvas.undo_queue) == 1
+    assert len(canvas.redo_queue) == 0
+
+
+def test_landmark_rendering_uses_fixed_screen_size(qtbot, monkeypatch) -> None:
+    """Landmark symbols and annotation stroke weights should not scale with zoom."""
+    from ddg.annotations import Annotation
+
+    canvas: Canvas = Canvas()
+    annotation: Annotation = Annotation(
+        label="landmark",
+        shape_type=AnnotationShape.POINT,
+        points=[(25.0, 30.0)],
+    )
+    monkeypatch.setattr(canvas, "annotation_type_visible", lambda shape: True)
+
+    canvas._render_external_annotation(annotation, 0)
+
+    assert len(canvas.external_annotation_items) == 1
+    item = canvas.external_annotation_items[0]
+    assert bool(
+        item.flags()
+        & QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    )
+    assert item.pen().isCosmetic() is True
+
+
+def test_unavailable_annotation_history_snapshot_is_not_recorded(qtbot) -> None:
+    """A snapshot read failure must not become a destructive undo event."""
+    canvas: Canvas = Canvas()
+    unavailable: dict[str, bool] = {
+        "__ddg_history_snapshot_unavailable__": True
+    }
+
+    canvas._record_annotation_history(
+        image_path="IMG_9999.JPG",
+        before_snapshot=unavailable,
+        after_snapshot={"shapes": []},
+        before_selection_source_index=None,
+        after_selection_source_index=None,
+    )
+
+    assert canvas.undo_queue == []
+
+
+def test_annotation_history_read_failure_uses_unavailable_sentinel(
+    qtbot, monkeypatch
+) -> None:
+    """A sidecar read failure must differ from "no sidecar exists"."""
+    canvas: Canvas = Canvas()
+    monkeypatch.setattr(
+        "ddg.canvas.load_labelme_raw_document",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("sharing violation")),
+    )
+
+    snapshot: dict[str, Any] | None = canvas._annotation_history_snapshot(
+        "IMG_9998.JPG"
+    )
+
+    assert snapshot is not None
+    assert snapshot.get("__ddg_history_snapshot_unavailable__") is True

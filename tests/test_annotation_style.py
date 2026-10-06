@@ -58,3 +58,16 @@ def test_annotation_visibility_round_trip(tmp_path) -> None:
 
     assert annotation_visibility_enabled(AnnotationShape.LINE, settings) is False
     assert annotation_visibility_enabled(AnnotationShape.POINT, settings) is True
+
+
+def test_nonfinite_stored_width_falls_back_to_default(tmp_path) -> None:
+    """NaN/Infinity in settings must not reach QPen construction."""
+    settings_path = tmp_path / "ddg-nonfinite-style-test.ini"
+    settings: QtCore.QSettings = QtCore.QSettings(
+        str(settings_path), QtCore.QSettings.Format.IniFormat
+    )
+    settings.setValue("annotations/symbology/line/width", "nan")
+
+    style: AnnotationStyle = load_annotation_style(AnnotationShape.LINE, settings)
+
+    assert style.width == 4.0

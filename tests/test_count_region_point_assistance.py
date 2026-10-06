@@ -111,3 +111,32 @@ def test_outside_point_warning_can_be_disabled(qtbot, monkeypatch) -> None:
         QtCore.QPointF(150.0, 50.0)
     ]
     assert canvas.dirty is True
+
+
+def test_display_points_reads_highlight_preference_once(qtbot, monkeypatch) -> None:
+    """One redraw should not query persistent settings once per point."""
+    canvas: Canvas = Canvas()
+    canvas.current_image_name = "IMG_8003.JPG"
+    canvas.current_class_name = "COMU"
+    canvas.colors = {"COMU": QtGui.QColor("blue")}
+    canvas.points = {
+        "IMG_8003.JPG": {
+            "COMU": [QtCore.QPointF(float(x), 50.0) for x in range(10)]
+        }
+    }
+    canvas.external_annotations = [_count_region()]
+    calls: list[bool] = []
+
+    def highlight_enabled() -> bool:
+        calls.append(True)
+        return True
+
+    monkeypatch.setattr(
+        canvas,
+        "highlight_outside_count_region_points_enabled",
+        highlight_enabled,
+    )
+
+    canvas.display_points()
+
+    assert len(calls) == 1

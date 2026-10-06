@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from PyQt6 import QtCore, QtGui
 
@@ -25,8 +26,10 @@ class AnnotationStyle:
         """Validate the style values."""
         if not QtGui.QColor(self.color).isValid():
             raise ValueError(f"Invalid annotation color: {self.color!r}")
-        if self.width <= 0:
-            raise ValueError("Annotation stroke width must be greater than zero.")
+        if not math.isfinite(self.width) or self.width <= 0:
+            raise ValueError(
+                "Annotation stroke width must be a finite number greater than zero."
+            )
 
 
 DEFAULT_ANNOTATION_STYLES: dict[AnnotationShape, AnnotationStyle] = {
@@ -71,7 +74,7 @@ def load_annotation_style(
 
     if not QtGui.QColor(color).isValid():
         color = default_style.color
-    if width <= 0:
+    if not math.isfinite(width) or width <= 0:
         width = default_style.width
 
     return AnnotationStyle(color=color, width=width)

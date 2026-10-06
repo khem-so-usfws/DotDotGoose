@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 from typing import Any, TypeAlias
 
 Point: TypeAlias = tuple[float, float]
@@ -56,6 +57,9 @@ class Annotation:
             ValueError: If the annotation has an invalid number of vertices.
         """
         point_count: int = len(self.points)
+        for x, y in self.points:
+            if not math.isfinite(float(x)) or not math.isfinite(float(y)):
+                raise ValueError("Annotation coordinates must be finite numbers.")
         if self.shape_type is AnnotationShape.POINT and point_count != 1:
             raise ValueError("Point annotations require exactly one vertex.")
         if self.shape_type is AnnotationShape.LINE and point_count < 2:

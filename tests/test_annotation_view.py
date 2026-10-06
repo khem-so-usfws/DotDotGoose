@@ -95,3 +95,60 @@ def test_escape_leaves_selection_mode(qtbot) -> None:
         qtbot.keyClick(view, QtCore.Qt.Key.Key_Escape)
 
     assert view.interaction_mode is InteractionMode.COUNT
+
+
+def test_annotation_preview_pen_is_cosmetic(qtbot) -> None:
+    """Annotation preview weight should remain constant in screen pixels."""
+    view: CentralGraphicsView = CentralGraphicsView()
+    scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
+    view.setScene(scene)
+    qtbot.addWidget(view)
+    view.start_line_annotation()
+    view._add_line_vertex(QtCore.QPointF(10.0, 10.0))
+    view._update_line_preview(QtCore.QPointF(20.0, 20.0))
+
+    assert view.line_preview_item is not None
+    assert view.line_preview_item.pen().isCosmetic() is True
+
+
+def test_click_without_drag_does_not_emit_annotation_move_finished(qtbot) -> None:
+    """Selecting a shape without moving it should not trigger a disk save."""
+    view: CentralGraphicsView = CentralGraphicsView()
+    scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
+    scene.setSceneRect(0.0, 0.0, 100.0, 100.0)
+    item: QtWidgets.QGraphicsRectItem = scene.addRect(20.0, 20.0, 40.0, 40.0)
+    item.setData(0, "ddg_external_annotation")
+    item.setData(1, 0)
+    item.setData(3, "polygon")
+    item.setData(4, False)
+    view.setScene(scene)
+    view.resize(200, 200)
+    view.show()
+    qtbot.addWidget(view)
+    view.start_annotation_selection()
+    finished: list[int] = []
+    view.external_annotation_move_finished.connect(finished.append)
+    viewport_point: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(30.0, 30.0))
+
+    qtbot.mouseClick(
+        view.viewport(),
+        QtCore.Qt.MouseButton.LeftButton,
+        pos=viewport_point,
+    )
+
+    assert finished == []
+
+
+def test_annotation_draw_mode_does_not_emit_count_point_delete(qtbot) -> None:
+    """Delete during polygon drawing must not delete selected DDG count points."""
+    view: CentralGraphicsView = CentralGraphicsView()
+    scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
+    view.setScene(scene)
+    qtbot.addWidget(view)
+    view.start_polygon_annotation()
+    delete_requests: list[bool] = []
+    view.delete_selection.connect(lambda: delete_requests.append(True))
+
+    qtbot.keyClick(view, QtCore.Qt.Key.Key_Delete)
+
+    assert delete_requests == []

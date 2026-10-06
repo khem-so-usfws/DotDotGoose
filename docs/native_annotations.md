@@ -1,15 +1,15 @@
 # Native Annotations in DotDotGoose
 
-DotDotGoose can create, edit, and store non-count annotations directly alongside the source image. This removes the routine need to open LabelMe for seabird counting boundaries while keeping LabelMe-compatible JSON sidecars.
+DotDotGoose can create, edit, and store non-count annotations directly alongside the source image. This removes the routine need to open LabelMe for counting boundaries while keeping LabelMe-compatible JSON sidecars.
 
-## Normal bird counting
+## Normal point counting
 
-Native annotations do not change the normal DDG bird-point interaction:
+Native annotations do not change the normal DDG point-counting interaction:
 
-- **Ctrl+left-click** adds a bird point for the active class.
+- **Ctrl+left-click** adds a point for the active class.
 - **Left-drag** pans the image.
-- **Shift+drag** rubber-band selects bird points.
-- Bird points remain separate from native annotation points.
+- **Shift+drag** rubber-band selects points.
+- DDG count points remain separate from native annotation points.
 
 ## Annotation types
 
@@ -64,18 +64,20 @@ Symbology and visibility are DDG display preferences. They do not modify annotat
 
 ## Count-region behavior
 
-When one or more `count_region` polygons exist, a bird point is valid when its point coordinate lies inside any of those polygons. A point exactly on a polygon boundary is treated as inside.
+When one or more `count_region` polygons exist, a point is valid when its point coordinate lies inside any of those polygons. A point exactly on a polygon boundary is treated as inside.
 
 Optional assistance includes:
 
 - dimming image areas outside the valid count region;
-- highlighting bird points outside the valid area;
-- warning before adding a new bird point outside the valid area;
+- highlighting points outside the valid area;
+- warning before adding a new point outside the valid area;
 - **Count Region QA...** summaries by class.
 
-The QA dialog provides **Previous Outside Point** and **Next Outside Point** controls to center the image on each outside-region bird point for review.
+The QA dialog provides **Previous Outside Point** and **Next Outside Point** controls to center the image on each outside-region point for review.
 
 An image with no explicit `count_region` is treated as unrestricted; ordinary DDG behavior applies to the whole image.
+
+**Native annotations v1 does not filter DDG's standard point totals or exports.** Count-region inclusion, warnings, highlighting, and QA are advisory/validation features at this stage; raw DDG point data remain unchanged.
 
 ## Files and data safety
 
@@ -96,13 +98,13 @@ DDG preserves unrelated LabelMe metadata and unsupported shapes where practical.
 
 ## Annotation semantics
 
-The standard seabird workflow uses:
+The standard counting workflow uses:
 
 | Geometry | Label | Meaning |
 |---|---|---|
-| Point | `landmark` | Visual reference location; never a bird count |
+| Point | `landmark` | Visual reference location; never a count point |
 | Line | `cutline` | Visual division between portions of a colony |
-| Polygon | `count_region` | Valid bird-counting area for that source image |
+| Polygon | `count_region` | Valid point-counting area for that source image |
 
 The shape type and label are separate. Labels can be changed through Annotation Properties when another semantic use is needed.
 
@@ -114,7 +116,7 @@ The source image is never resampled or modified by native annotations. Coordinat
 
 Before tagging a release, verify the following with representative operational imagery:
 
-1. Open an image with no sidecar and count birds normally.
+1. Open an image with no sidecar and count points normally.
 2. Create a landmark, cutline, and count-region polygon; close and reopen the image.
 3. Move whole annotations and individual vertices; insert and delete vertices.
 4. Undo and redo annotation creation, deletion, movement, and property changes.
@@ -122,13 +124,13 @@ Before tagging a release, verify the following with representative operational i
 6. Change annotation labels, colors, and stroke weights; restart DDG and confirm display preferences persist.
 7. Toggle point, line, and polygon visibility independently.
 8. Use a whole-image count region and confirm unrelated annotations survive.
-9. Put bird points inside, outside, and exactly on a count-region boundary; run Count Region QA.
+9. Put points inside, outside, and exactly on a count-region boundary; run Count Region QA.
 10. Navigate every outside point with Previous/Next and confirm the image recenters correctly.
 11. Confirm outside-point warning/highlighting preferences work as expected.
 12. Switch rapidly among 10–20 images, including during unfinished annotation drawing and while annotations are selected.
-13. Confirm normal DDG controls remain unchanged: Ctrl+click adds a bird, drag pans, Shift+drag selects.
+13. Confirm normal DDG controls remain unchanged: Ctrl+click adds a point, drag pans, Shift+drag selects points.
 14. Inspect `.json` and `.json.bak` after annotation edits and verify the backup contains the prior live state.
 15. Test a malformed annotation JSON and confirm DDG warns rather than overwriting it.
-16. Save/reopen the `.pnt` project and confirm existing bird classes, counts, and exports remain intact.
+16. Save/reopen the `.pnt` project and confirm existing classes, counts, and exports remain intact.
 
 After this checklist passes, native annotations v1 should be treated as a stable baseline before adding multi-image colony/reference-window functionality.

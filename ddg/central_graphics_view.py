@@ -80,7 +80,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.polygon_points: list[QtCore.QPointF] = []
         self.polygon_preview_item: QtWidgets.QGraphicsPathItem | None = None
         self.dragging_annotation_vertex: tuple[int, int] | None = None
+        self.dragging_annotation_vertex_changed: bool = False
         self.dragging_annotation_index: int | None = None
+        self.dragging_annotation_changed: bool = False
         self.dragging_annotation_last_point: QtCore.QPointF | None = None
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
@@ -126,7 +128,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.line_points = []
         self.polygon_points = []
         self.dragging_annotation_vertex = None
+        self.dragging_annotation_vertex_changed = False
         self.dragging_annotation_index = None
+        self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
         self.interaction_mode = InteractionMode.COUNT
         if was_selection_mode:
@@ -145,7 +149,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.line_points = []
         self.polygon_points = []
         self.dragging_annotation_vertex = None
+        self.dragging_annotation_vertex_changed = False
         self.dragging_annotation_index = None
+        self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
@@ -163,7 +169,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.line_points = []
         self.polygon_points = []
         self.dragging_annotation_vertex = None
+        self.dragging_annotation_vertex_changed = False
         self.dragging_annotation_index = None
+        self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
@@ -247,11 +255,18 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.ctrl = True
         elif event.key() == QtCore.Qt.Key.Key_Shift:
             self.shift = True
-        elif event.key() == QtCore.Qt.Key.Key_Delete or event.key() == QtCore.Qt.Key.Key_Backspace:
+        elif event.key() in {
+            QtCore.Qt.Key.Key_Delete,
+            QtCore.Qt.Key.Key_Backspace,
+        }:
             if self.interaction_mode is InteractionMode.SELECT:
                 self.external_annotation_delete_requested.emit()
-            else:
+            elif self.interaction_mode is InteractionMode.COUNT:
                 self.delete_selection.emit()
+        elif self.interaction_mode is not InteractionMode.COUNT:
+            # Count-point shortcuts should not mutate point data while an
+            # annotation drawing/edit mode owns the keyboard interaction.
+            return
         elif event.key() == QtCore.Qt.Key.Key_R:
             self.relabel_selection.emit()
         elif event.key() == QtCore.Qt.Key.Key_D:
@@ -310,6 +325,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             vertex_index: int
             annotation_index, vertex_index = self.dragging_annotation_vertex
             point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
+            self.dragging_annotation_vertex_changed = True
             self.external_annotation_vertex_moved.emit(
                 annotation_index, vertex_index, point
             )
@@ -323,9 +339,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
             delta: QtCore.QPointF = point - self.dragging_annotation_last_point
             self.dragging_annotation_last_point = QtCore.QPointF(point)
-            self.external_annotation_moved.emit(
-                self.dragging_annotation_index, delta
-            )
+            if delta.x() != 0.0 or delta.y() != 0.0:
+                self.dragging_annotation_changed = True
+                self.external_annotation_moved.emit(
+                    self.dragging_annotation_index, delta
+                )
             event.accept()
             return
         if self.interaction_mode is InteractionMode.LINE:
@@ -357,6 +375,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                         annotation_index,
                         vertex_index,
                     )
+                    self.dragging_annotation_vertex_changed = False
                     self.external_annotation_selected.emit(annotation_index)
                     event.accept()
                     return
@@ -366,6 +385,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                     self.external_annotation_selected.emit(annotation_index)
                     if not locked:
                         self.dragging_annotation_index = annotation_index
+                        self.dragging_annotation_changed = False
                         self.dragging_annotation_last_point = self.mapToScene(
                             event.position().toPoint()
                         )
@@ -428,10 +448,13 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             annotation_index: int
             vertex_index: int
             annotation_index, vertex_index = self.dragging_annotation_vertex
+            changed: bool = self.dragging_annotation_vertex_changed
             self.dragging_annotation_vertex = None
-            self.external_annotation_vertex_move_finished.emit(
-                annotation_index, vertex_index
-            )
+            self.dragging_annotation_vertex_changed = False
+            if changed:
+                self.external_annotation_vertex_move_finished.emit(
+                    annotation_index, vertex_index
+                )
             event.accept()
             return
         if (
@@ -440,9 +463,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
             annotation_index: int = self.dragging_annotation_index
+            changed: bool = self.dragging_annotation_changed
             self.dragging_annotation_index = None
+            self.dragging_annotation_changed = False
             self.dragging_annotation_last_point = None
-            self.external_annotation_move_finished.emit(annotation_index)
+            if changed:
+                self.external_annotation_move_finished.emit(annotation_index)
             event.accept()
             return
         if self.dragMode() == QtWidgets.QGraphicsView.DragMode.RubberBandDrag:
@@ -575,6 +601,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             style.width,
             QtCore.Qt.PenStyle.DashLine,
         )
+        pen.setCosmetic(True)
         scene: QtWidgets.QGraphicsScene | None = self.scene()
         if scene is not None:
             self.line_preview_item = scene.addPath(path, pen)
@@ -627,6 +654,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             style.width,
             QtCore.Qt.PenStyle.DashLine,
         )
+        pen.setCosmetic(True)
         scene: QtWidgets.QGraphicsScene | None = self.scene()
         if scene is not None:
             self.polygon_preview_item = scene.addPath(path, pen)

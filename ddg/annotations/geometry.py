@@ -55,7 +55,7 @@ def point_in_polygon(point: Point, polygon: list[Point]) -> bool:
     """Return whether a point is inside or on the edge of a polygon.
 
     The implementation uses an even/odd ray crossing test and treats polygon
-    edges as inside so bird points exactly on a count boundary are not
+    edges as inside so points exactly on a count boundary are not
     unexpectedly excluded.
 
     Args:
