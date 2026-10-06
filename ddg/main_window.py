@@ -206,6 +206,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.annotation_mode_changed
         )
 
+        annotation_menu.addSeparator()
+        annotation_help_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Annotation Help...")
+        )
+        annotation_help_action.triggered.connect(self.show_annotation_help)
+
+        self.annotation_mode_changed(
+            self.centralWidget().graphicsView.interaction_mode.value
+        )
+
         menu = self.menuBar().addMenu(self.tr('Language'))
         menu.setObjectName('Language')
         menu.addAction(self.tr('Chinese (Mandarin)'), self.zh_Hans_CN)
@@ -253,8 +263,33 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             )
         else:
-            self.statusBar().clearMessage()
+            self.statusBar().showMessage(
+                self.tr(
+                    "Count mode: Ctrl+click adds a bird point; drag pans; "
+                    "Shift+drag selects bird points."
+                )
+            )
 
+    def show_annotation_help(self) -> None:
+        """Show concise built-in help for native annotation controls."""
+        help_text: str = self.tr(
+            "Normal counting\n"
+            "  Ctrl+click: add bird point\n"
+            "  Drag: pan image\n"
+            "  Shift+drag: select bird points\n\n"
+            "Native annotations\n"
+            "  Landmark: one point\n"
+            "  Cutline: click vertices, Enter/double-click to finish\n"
+            "  Count region: click vertices, Enter/double-click to finish\n"
+            "  Select/Edit: drag shapes or vertices; right-click for vertex edits\n"
+            "  Ctrl+Z/Ctrl+Y: undo/redo annotation edits\n\n"
+            "Count regions\n"
+            "  Bird-point centers inside any count_region polygon are valid.\n"
+            "  Count Region QA can navigate points outside the valid area."
+        )
+        QtWidgets.QMessageBox.information(
+            self, self.tr("Native Annotation Help"), help_text
+        )
 
     def configure_annotation_symbology(self) -> None:
         """Open annotation symbology settings and refresh visible annotations."""

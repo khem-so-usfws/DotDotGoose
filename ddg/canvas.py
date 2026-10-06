@@ -396,6 +396,29 @@ class Canvas(QtWidgets.QGraphicsScene):
             result["outside"] += outside_count
         return result
 
+    def outside_count_region_points(self) -> list[tuple[str, QtCore.QPointF]]:
+        """Return active-image bird points outside explicit count regions.
+
+        Images without an explicit ``count_region`` polygon are unrestricted and
+        therefore return an empty list. The returned points are copies so QA
+        navigation cannot mutate stored DDG point data.
+
+        Returns:
+            ``(class_name, point)`` pairs for outside-region bird points.
+        """
+        if self.current_image_name is None or not self.has_count_regions():
+            return []
+
+        outside_points: list[tuple[str, QtCore.QPointF]] = []
+        image_points: dict[str, list[QtCore.QPointF]] = self.points.get(
+            self.current_image_name, {}
+        )
+        for class_name in sorted(image_points):
+            for point in image_points[class_name]:
+                if self.point_is_outside_count_region(point):
+                    outside_points.append((class_name, QtCore.QPointF(point)))
+        return outside_points
+
     def point_is_outside_count_region(self, point: QtCore.QPointF) -> bool:
         """Return whether a bird point is outside an explicit count region.
 

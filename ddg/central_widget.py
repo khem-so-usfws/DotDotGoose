@@ -31,6 +31,7 @@ from ddg import Canvas
 from ddg import PointWidget
 from ddg.fields import BoxText, LineText
 from ddg.annotation_properties_dialog import AnnotationPropertiesDialog
+from ddg.count_region_qa_dialog import CountRegionQADialog
 from ddg.annotations import Annotation
 
 # from .ui_central_widget import Ui_central as CLASS_DIALOG
@@ -363,7 +364,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.canvas.set_whole_image_count_region()
 
     def show_count_region_qa(self) -> None:
-        """Show active-image bird-point QA for explicit count regions."""
+        """Show active-image count-region QA with outside-point navigation."""
         if not self.canvas.current_image_name:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -403,11 +404,22 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                     )
                 )
 
-        QtWidgets.QMessageBox.information(
-            self,
-            self.tr("Count Region QA"),
-            "\n".join(lines),
+        dialog: CountRegionQADialog = CountRegionQADialog(
+            summary_lines=lines,
+            outside_points=self.canvas.outside_count_region_points(),
+            parent=self,
         )
+        dialog.point_requested.connect(self._center_on_count_region_qa_point)
+        dialog.focus_current_point()
+        dialog.exec()
+
+    def _center_on_count_region_qa_point(self, point: QtCore.QPointF) -> None:
+        """Center the image viewer on one outside-region bird point.
+
+        Args:
+            point: Bird point in source-image pixel coordinates.
+        """
+        self.graphicsView.centerOn(point)
 
     def resizeEvent(self, theEvent):
         self.graphicsView.resize_image()
