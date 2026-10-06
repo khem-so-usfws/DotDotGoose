@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtWidgets
 
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 
 
-def test_finish_line_emits_completed_points(qtbot) -> None:
+def test_finish_line_emits_completed_points(qtbot: Any) -> None:
     """Finishing a valid line should emit its source-image vertices."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -29,7 +31,7 @@ def test_finish_line_emits_completed_points(qtbot) -> None:
     assert view.line_points == []
 
 
-def test_cancel_line_discards_transient_vertices(qtbot) -> None:
+def test_cancel_line_discards_transient_vertices(qtbot: Any) -> None:
     """Canceling line mode should discard unsaved transient geometry."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -45,7 +47,7 @@ def test_cancel_line_discards_transient_vertices(qtbot) -> None:
     assert view.line_preview_item is None
 
 
-def test_landmark_click_emits_point_and_returns_to_count(qtbot) -> None:
+def test_landmark_click_emits_point_and_returns_to_count(qtbot: Any) -> None:
     """One landmark click should emit one point and leave annotation mode."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -69,7 +71,7 @@ def test_landmark_click_emits_point_and_returns_to_count(qtbot) -> None:
     assert view.interaction_mode is InteractionMode.COUNT
 
 
-def test_selection_mode_delete_requests_annotation_delete(qtbot) -> None:
+def test_selection_mode_delete_requests_annotation_delete(qtbot: Any) -> None:
     """Delete should target native annotations while annotation edit mode is active."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -83,7 +85,7 @@ def test_selection_mode_delete_requests_annotation_delete(qtbot) -> None:
     assert view.interaction_mode is InteractionMode.SELECT
 
 
-def test_escape_leaves_selection_mode(qtbot) -> None:
+def test_escape_leaves_selection_mode(qtbot: Any) -> None:
     """Escape should clear annotation selection mode and return to counting."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -97,7 +99,7 @@ def test_escape_leaves_selection_mode(qtbot) -> None:
     assert view.interaction_mode is InteractionMode.COUNT
 
 
-def test_annotation_preview_pen_is_cosmetic(qtbot) -> None:
+def test_annotation_preview_pen_is_cosmetic(qtbot: Any) -> None:
     """Annotation preview weight should remain constant in screen pixels."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -111,7 +113,7 @@ def test_annotation_preview_pen_is_cosmetic(qtbot) -> None:
     assert view.line_preview_item.pen().isCosmetic() is True
 
 
-def test_click_without_drag_does_not_emit_annotation_move_finished(qtbot) -> None:
+def test_click_without_drag_does_not_emit_annotation_move_finished(qtbot: Any) -> None:
     """Selecting a shape without moving it should not trigger a disk save."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -139,7 +141,7 @@ def test_click_without_drag_does_not_emit_annotation_move_finished(qtbot) -> Non
     assert finished == []
 
 
-def test_annotation_draw_mode_does_not_emit_count_point_delete(qtbot) -> None:
+def test_annotation_draw_mode_does_not_emit_count_point_delete(qtbot: Any) -> None:
     """Delete during polygon drawing must not delete selected DDG count points."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()

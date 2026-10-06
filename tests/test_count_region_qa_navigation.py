@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore
 
 from ddg import Canvas
@@ -23,7 +25,7 @@ def _count_region() -> Annotation:
     )
 
 
-def test_outside_count_region_points_returns_only_outside_points(qtbot) -> None:
+def test_outside_count_region_points_returns_only_outside_points(qtbot: Any) -> None:
     """Outside-point enumeration should retain class and source coordinates."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_9000.JPG"
@@ -43,7 +45,7 @@ def test_outside_count_region_points_returns_only_outside_points(qtbot) -> None:
     ]
 
 
-def test_outside_count_region_points_empty_without_explicit_region(qtbot) -> None:
+def test_outside_count_region_points_empty_without_explicit_region(qtbot: Any) -> None:
     """Images without a count region should have no QA outside-point list."""
     canvas: Canvas = Canvas()
     canvas.current_image_name = "IMG_9001.JPG"
@@ -54,7 +56,7 @@ def test_outside_count_region_points_empty_without_explicit_region(qtbot) -> Non
     assert canvas.outside_count_region_points() == []
 
 
-def test_qa_dialog_navigates_outside_points(qtbot) -> None:
+def test_qa_dialog_navigates_outside_points(qtbot: Any) -> None:
     """Next/previous controls should emit the corresponding source point."""
     dialog: CountRegionQADialog = CountRegionQADialog(
         summary_lines=["Outside count region: 2"],

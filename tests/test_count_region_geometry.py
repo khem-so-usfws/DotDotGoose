@@ -22,7 +22,7 @@ def _count_region() -> Annotation:
 
 def test_point_in_polygon_includes_interior_and_boundary() -> None:
     """Interior points and exact boundary points should both be valid."""
-    polygon = _count_region().points
+    polygon: list[tuple[float, float]] = _count_region().points
 
     assert point_in_polygon((50.0, 50.0), polygon) is True
     assert point_in_polygon((0.0, 50.0), polygon) is True
@@ -32,7 +32,7 @@ def test_point_in_polygon_includes_interior_and_boundary() -> None:
 
 def test_count_region_polygons_filters_by_label_and_shape() -> None:
     """Only polygon annotations labeled count_region define valid area."""
-    annotations = [
+    annotations: list[Annotation] = [
         _count_region(),
         Annotation(
             label="other",
@@ -46,14 +46,14 @@ def test_count_region_polygons_filters_by_label_and_shape() -> None:
         ),
     ]
 
-    regions = count_region_polygons(annotations)
+    regions: list[Annotation] = count_region_polygons(annotations)
 
     assert regions == [annotations[0]]
 
 
 def test_point_in_count_regions_uses_union_semantics() -> None:
     """A point is valid when it falls in any count-region polygon."""
-    annotations = [
+    annotations: list[Annotation] = [
         _count_region(),
         Annotation(
             label="count_region",

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtWidgets
 
 from ddg.central_graphics_view import CentralGraphicsView, NavigationOverride
 
 
-def _view(qtbot) -> CentralGraphicsView:
+def _view(qtbot: Any) -> CentralGraphicsView:
     """Create a visible graphics view with a simple scene."""
     view: CentralGraphicsView = CentralGraphicsView()
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -21,7 +23,7 @@ def _view(qtbot) -> CentralGraphicsView:
     return view
 
 
-def test_plain_left_click_adds_point(qtbot) -> None:
+def test_plain_left_click_adds_point(qtbot: Any) -> None:
     """A normal left click should add a point in count mode."""
     view: CentralGraphicsView = _view(qtbot)
 
@@ -34,7 +36,7 @@ def test_plain_left_click_adds_point(qtbot) -> None:
         )
 
 
-def test_ctrl_left_click_remains_compatibility_alias(qtbot) -> None:
+def test_ctrl_left_click_remains_compatibility_alias(qtbot: Any) -> None:
     """Legacy Ctrl+click should still add a point without changing semantics."""
     view: CentralGraphicsView = _view(qtbot)
 
@@ -47,7 +49,7 @@ def test_ctrl_left_click_remains_compatibility_alias(qtbot) -> None:
         )
 
 
-def test_plain_drag_neither_pans_nor_adds_point(qtbot) -> None:
+def test_plain_drag_neither_pans_nor_adds_point(qtbot: Any) -> None:
     """A drag without C should not pan and should not become an accidental point."""
     view: CentralGraphicsView = _view(qtbot)
     emitted: list[QtCore.QPointF] = []
@@ -73,7 +75,7 @@ def test_plain_drag_neither_pans_nor_adds_point(qtbot) -> None:
     assert view.dragMode() is QtWidgets.QGraphicsView.DragMode.NoDrag
 
 
-def test_shift_drag_still_uses_rubber_band_selection(qtbot) -> None:
+def test_shift_drag_still_uses_rubber_band_selection(qtbot: Any) -> None:
     """Shift+drag should retain DDG's point-selection gesture."""
     view: CentralGraphicsView = _view(qtbot)
 
@@ -95,7 +97,7 @@ def test_shift_drag_still_uses_rubber_band_selection(qtbot) -> None:
     assert view.dragMode() is QtWidgets.QGraphicsView.DragMode.NoDrag
 
 
-def test_c_drag_temporarily_pans_without_adding_point(qtbot) -> None:
+def test_c_drag_temporarily_pans_without_adding_point(qtbot: Any) -> None:
     """Holding C should temporarily replace the current tool with panning."""
     view: CentralGraphicsView = _view(qtbot)
     emitted: list[QtCore.QPointF] = []
@@ -123,7 +125,7 @@ def test_c_drag_temporarily_pans_without_adding_point(qtbot) -> None:
     assert view._active_navigation_override() is None
 
 
-def test_z_drag_rectangle_zooms_in(qtbot) -> None:
+def test_z_drag_rectangle_zooms_in(qtbot: Any) -> None:
     """Z+drag should zoom in to the dragged viewport rectangle."""
     view: CentralGraphicsView = _view(qtbot)
     before: float = view.transform().m11()
@@ -144,7 +146,7 @@ def test_z_drag_rectangle_zooms_in(qtbot) -> None:
     assert view.transform().m11() > before
 
 
-def test_x_drag_rectangle_zooms_out(qtbot) -> None:
+def test_x_drag_rectangle_zooms_out(qtbot: Any) -> None:
     """X+drag should proportionally zoom out around the dragged rectangle."""
     view: CentralGraphicsView = _view(qtbot)
     before: float = view.transform().m11()
@@ -165,7 +167,7 @@ def test_x_drag_rectangle_zooms_out(qtbot) -> None:
     assert view.transform().m11() < before
 
 
-def test_navigation_override_works_during_polygon_drawing(qtbot) -> None:
+def test_navigation_override_works_during_polygon_drawing(qtbot: Any) -> None:
     """Temporary pan must not cancel or add vertices to an unfinished polygon."""
     view: CentralGraphicsView = _view(qtbot)
     view.start_polygon_annotation()
@@ -194,7 +196,7 @@ def test_navigation_override_works_during_polygon_drawing(qtbot) -> None:
     assert view.interaction_mode.value == "polygon"
 
 
-def test_modified_z_does_not_activate_navigation_override(qtbot) -> None:
+def test_modified_z_does_not_activate_navigation_override(qtbot: Any) -> None:
     """Ctrl+Z must remain available to the existing undo shortcut."""
     view: CentralGraphicsView = _view(qtbot)
 
@@ -213,7 +215,7 @@ def test_modified_z_does_not_activate_navigation_override(qtbot) -> None:
     )
 
 
-def test_escape_cancels_pending_count_click(qtbot) -> None:
+def test_escape_cancels_pending_count_click(qtbot: Any) -> None:
     """Esc before mouse release must prevent an unintended count point."""
     view: CentralGraphicsView = _view(qtbot)
     emitted: list[QtCore.QPointF] = []
@@ -238,7 +240,7 @@ def test_escape_cancels_pending_count_click(qtbot) -> None:
     assert emitted == []
 
 
-def test_escape_cancels_navigation_before_unfinished_polygon(qtbot) -> None:
+def test_escape_cancels_navigation_before_unfinished_polygon(qtbot: Any) -> None:
     """Esc should cancel temporary navigation before cancelling annotation work."""
     view: CentralGraphicsView = _view(qtbot)
     view.start_polygon_annotation()
@@ -273,7 +275,7 @@ def test_escape_cancels_navigation_before_unfinished_polygon(qtbot) -> None:
     assert view.polygon_points == []
 
 
-def test_starting_annotation_mode_cancels_pending_count_click(qtbot) -> None:
+def test_starting_annotation_mode_cancels_pending_count_click(qtbot: Any) -> None:
     """Changing tools while the mouse is down must not add a stale point."""
     view: CentralGraphicsView = _view(qtbot)
     emitted: list[QtCore.QPointF] = []

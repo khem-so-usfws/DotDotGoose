@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 
 
 def test_prepare_for_image_change_removes_line_preview(
-    qtbot,
+    qtbot: Any,
 ) -> None:
     """An in-progress cutline must release its scene item before scene.clear."""
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -30,7 +32,7 @@ def test_prepare_for_image_change_removes_line_preview(
 
 
 def test_prepare_for_image_change_removes_polygon_preview(
-    qtbot,
+    qtbot: Any,
 ) -> None:
     """An in-progress polygon must release its scene item before scene.clear."""
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
@@ -55,7 +57,7 @@ def test_prepare_for_image_change_removes_polygon_preview(
 
 
 def test_preview_cleanup_tolerates_item_already_deleted(
-    qtbot,
+    qtbot: Any,
 ) -> None:
     """Cleanup must tolerate a Qt item that a scene has already destroyed."""
     scene: QtWidgets.QGraphicsScene = QtWidgets.QGraphicsScene()
