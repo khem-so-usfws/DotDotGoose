@@ -116,26 +116,3 @@ The shape type and label are separate. Labels can be changed through Annotation 
 ## Compatibility
 
 The source image is never resampled or modified by native annotations. Coordinates remain in original-image pixel space, preserving compatibility with future training-data and multi-image colony workflows.
-
-## Native annotations v1 regression checklist
-
-Before tagging a release, verify the following with representative operational imagery:
-
-1. Open an image with no sidecar and count points normally.
-2. Create a landmark, cutline, and count-region polygon; close and reopen the image.
-3. Move whole annotations and individual vertices; insert and delete vertices.
-4. Undo and redo annotation creation, deletion, movement, and property changes.
-5. Lock an annotation and confirm geometry/deletion is blocked until it is unlocked.
-6. Change annotation labels, colors, and stroke weights; restart DDG and confirm display preferences persist.
-7. Toggle point, line, and polygon visibility independently.
-8. Use a whole-image count region and confirm unrelated annotations survive.
-9. Put points inside, outside, and exactly on a count-region boundary; run Count Region QA.
-10. Navigate every outside point with Previous/Next and confirm the image recenters correctly.
-11. Confirm outside-point warning/highlighting preferences work as expected.
-12. Switch rapidly among 10–20 images, including during unfinished annotation drawing and while annotations are selected.
-13. Confirm navigation/count controls: click adds a point, Shift+drag selects points, C+drag pans, Z+drag zooms in, and X+drag zooms out. Confirm plain drag does not add a point.
-14. Inspect `.json` and `.json.bak` after annotation edits and verify the backup contains the prior live state.
-15. Test a malformed annotation JSON and confirm DDG warns rather than overwriting it.
-16. Save/reopen the `.pnt` project and confirm existing classes, counts, and exports remain intact.
-
-After this checklist passes, native annotations v1 should be treated as a stable baseline before adding multi-image colony/reference-window functionality.
