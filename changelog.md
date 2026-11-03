@@ -3,6 +3,15 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.8.6
+
+- Add matching Current and Reference image pickers, Prev/Next, Fit, and 1:1 controls.
+- Keep Current controls available in single-image mode.
+- Share sidebar grid and dot display settings across both canvases.
+- Preserve point selections and their visible highlights during display changes.
+- Guard annotation-preview cleanup against graphics already deleted by the scene.
+- Retain independent image views and the existing image-swap and annotation workflows.
+
 ## 1.8.0
 
 Version 1.8.0 adds native annotation tools, an ArcGIS-inspired navigation model,

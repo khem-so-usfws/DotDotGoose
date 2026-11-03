@@ -137,6 +137,7 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
                 icon.fill(color)
                 item.setData(QtCore.Qt.ItemDataRole.DecorationRole, icon)
                 self.tableWidgetClasses.setItem(row, 1, item)
+                self.canvas.display_points()
 
     def change_active_point_color(self, event):
         color = QtWidgets.QColorDialog.getColor()

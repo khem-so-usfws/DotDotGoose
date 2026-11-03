@@ -62,11 +62,12 @@ Key behavior:
 
 - **1×2 Side by Side** is the default layout;
 - **2×1 Stacked** is also available;
-- the existing DDG image selector remains authoritative for **★ CURRENT**;
+- both panels have matching image pickers, Previous/Next, Fit, and 1:1 controls;
 - Reference has an independent selector plus Previous/Next, Fit, 1:1,
   **Make Current**, and hide controls;
 - pan and zoom are independent between panes;
-- normal DDG count points can be added only in Current;
+- count points can be added and selected in either pane using the shared class;
+- sidebar grid spacing, color, visibility and dot size, color, visibility update both panes;
 - landmarks, cutlines, and count regions can be drawn and edited in either pane;
 - after choosing a drawing tool, the first ordinary click in either pane both
   selects that pane and starts the annotation—no separate activation click is

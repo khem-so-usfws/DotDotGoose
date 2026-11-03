@@ -24,8 +24,10 @@ upgrade. Changing layouts does not change either selected image.
 
 ## Current image
 
-The existing DDG image selection remains authoritative. The pane marked
-**★ CURRENT** is the normal DDG image and retains standard count-point behavior.
+The pane marked **★ CURRENT** has an image picker, Prev/Next, Fit, and 1:1
+controls in both single-image and comparison modes. Its picker uses the same
+Current image-loading workflow as the sidebar. Selecting the Reference image
+as Current retains the existing swap behavior.
 
 - Click adds a point in the selected class.
 - Shift+drag selects count points.
@@ -44,8 +46,20 @@ The Reference header provides an independent image selector plus:
   Current image into Reference;
 - **×** — hide Compare.
 
-Normal DDG count-point placement and Shift count-point selection are disabled in
-Reference. Navigation and native annotation editing remain available.
+Count-point placement and Shift+drag selection work in Reference using the
+shared class selection. Native annotation editing retains its existing behavior.
+
+## Shared display settings
+
+The left sidebar controls grid spacing, grid color, grid visibility, dot size,
+dot color, and dot visibility in both panes. Each pane retains its independent
+image, zoom, and pan. Display changes preserve the point selection and its
+fixed-size yellow/black highlight. Hiding dots temporarily hides their highlights.
+Showing dots restores those highlights.
+
+Image pickers list existing project images. Reference excludes Current. Missing
+files are omitted when lists refresh. Adding images through the existing project
+workflow refreshes both lists.
 
 ## Native annotations
 

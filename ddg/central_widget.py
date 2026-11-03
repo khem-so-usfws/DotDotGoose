@@ -230,6 +230,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         )
         self.reference_canvas.history_recorded.connect(self._reference_points_edited)
         self.canvas.point_display_changed.connect(self._sync_reference_points)
+        self.canvas.grid_display_changed.connect(self._sync_reference_grid)
+        self.reference_graphics_view.toggle_grid.connect(
+            self.point_widget.checkBoxDisplayGrid.toggle
+        )
         self._connect_reference_annotation_signals()
         self.reference_canvas.image_about_to_change.connect(
             self.reference_graphics_view.prepare_for_image_change
@@ -259,27 +263,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             QtWidgets.QVBoxLayout, self.frameCenter.layout()
         )
         center_layout.removeWidget(self.graphicsView)
-        self.current_pane: QtWidgets.QFrame = QtWidgets.QFrame(self.frameCenter)
-        self.current_pane.setMinimumSize(0, 0)
-        self.current_pane.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Ignored,
-            QtWidgets.QSizePolicy.Policy.Ignored,
-        )
-        current_layout: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout(
-            self.current_pane
-        )
-        current_layout.setSizeConstraint(
-            QtWidgets.QLayout.SizeConstraint.SetNoConstraint
-        )
-        current_layout.setContentsMargins(2, 2, 2, 2)
-        current_layout.setSpacing(2)
-        self.current_compare_label: QtWidgets.QLabel = QtWidgets.QLabel(
-            self.tr("★ CURRENT"), self.current_pane
-        )
-        self.current_compare_label.setStyleSheet("font-weight: bold;")
-        self.current_compare_label.hide()
-        current_layout.addWidget(self.current_compare_label)
-        current_layout.addWidget(self.graphicsView, 1)
+        self.current_pane: ComparePane = ComparePane(self.frameCenter, self.graphicsView)
+        self.current_compare_label: QtWidgets.QLabel = self.current_pane.label
+        self.current_pane.image_requested.connect(self.load_current_image)
 
         self.compare_splitter: QtWidgets.QSplitter = QtWidgets.QSplitter(
             QtCore.Qt.Orientation.Horizontal, self.frameCenter
@@ -327,16 +313,34 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
         self.lineEditSurveyId.textChanged.connect(self.canvas.update_survey_id)
         self.canvas.points_loaded.connect(self.lineEditSurveyId.setText)
+        self.canvas.points_loaded.connect(lambda _survey: self.refresh_compare_images())
+
+    def load_current_image(self, image_name: str) -> None:
+        """Switch Current through the existing canvas image lifecycle.
+
+        Args:
+            image_name: Project image basename selected in the Current picker.
+        """
+        path: str = os.path.join(self.canvas.directory, image_name)
+        if image_name in self.canvas.points and os.path.isfile(path):
+            self.canvas.load_image(path)
+
+    def _sync_reference_grid(self) -> None:
+        """Render the Reference grid using the authoritative sidebar settings."""
+        self.reference_canvas.ui = self.canvas.ui
+        self.reference_canvas.show_grid = self.canvas.show_grid
+        self.reference_canvas.display_grid()
 
     def _sync_reference_points(self) -> None:
         """Share project dots and class styling with the Reference canvas."""
+        if self.reference_canvas.points is not self.canvas.points:
+            self.reference_canvas.selection = []
         self.reference_canvas.points = self.canvas.points
         self.reference_canvas.classes = self.canvas.classes
         self.reference_canvas.colors = self.canvas.colors
         self.reference_canvas.ui = self.canvas.ui
         self.reference_canvas.current_class_name = self.canvas.current_class_name
         self.reference_canvas.show_points = self.canvas.show_points
-        self.reference_canvas.selection = []
         self.reference_canvas.display_points()
 
     def _reference_points_edited(self) -> None:
@@ -633,7 +637,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return
         self._compare_enabled = enabled
         self.compare_pane.setVisible(enabled)
-        self.current_compare_label.setVisible(enabled)
+        self.current_compare_label.show()
         if enabled:
             self.refresh_compare_images(
                 preferred=self._last_reference_image_name, load_if_needed=True
@@ -686,6 +690,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.current_compare_label.setText(
             self.tr("★ CURRENT — {}").format(image_name)
         )
+        self.refresh_compare_images()
         if not self._compare_enabled:
             return
         reference_name: str | None = self.reference_canvas.current_image_name
@@ -724,6 +729,12 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             preferred: Reference basename to preserve when possible.
             load_if_needed: Load a sensible reference if none is loaded.
         """
+        all_names: list[str] = [
+            name
+            for name in sorted(self.canvas.points)
+            if os.path.isfile(os.path.join(self.canvas.directory, name))
+        ]
+        self.current_pane.set_images(all_names, self.canvas.current_image_name)
         names: list[str] = self._available_reference_images()
         selected: str | None = (
             preferred
@@ -767,6 +778,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if not os.path.isfile(image_path):
             return
         self._sync_reference_points()
+        self._sync_reference_grid()
         self.reference_canvas.directory = self.canvas.directory
         self.reference_canvas.load_image(image_path)
         self._last_reference_image_name = image_name

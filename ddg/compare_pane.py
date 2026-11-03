@@ -20,11 +20,16 @@ class ComparePane(QtWidgets.QFrame):
     make_current_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
     hide_requested: QtCore.pyqtSignal = QtCore.pyqtSignal()
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        graphics_view: CentralGraphicsView | None = None,
+    ) -> None:
         """Create the reference pane.
 
         Args:
             parent: Optional Qt parent widget.
+            graphics_view: Existing Current view, or None for a Reference view.
         """
         super().__init__(parent)
         self.setObjectName("compareReferencePane")
@@ -44,6 +49,7 @@ class ComparePane(QtWidgets.QFrame):
         self.label: QtWidgets.QLabel = QtWidgets.QLabel(self.tr("REFERENCE"), self)
         self.label.setStyleSheet("font-weight: bold;")
         header.addWidget(self.label)
+        self.label.setToolTip(self.label.text())
 
         self.image_combo: QtWidgets.QComboBox = QtWidgets.QComboBox(self)
         self.image_combo.setSizeAdjustPolicy(
@@ -66,9 +72,7 @@ class ComparePane(QtWidgets.QFrame):
         self.make_current_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
             self.tr("Make Current"), self
         )
-        self.fit_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
-            self.tr("Fit"), self
-        )
+        self.fit_button: QtWidgets.QPushButton = QtWidgets.QPushButton(self.tr("Fit"), self)
         self.actual_size_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
             self.tr("1:1"), self
         )
@@ -87,7 +91,14 @@ class ComparePane(QtWidgets.QFrame):
             header.addWidget(button)
         layout.addLayout(header)
 
-        self.graphics_view: CentralGraphicsView = CentralGraphicsView(self)
+        self.graphics_view: CentralGraphicsView = (
+            graphics_view if graphics_view is not None else CentralGraphicsView(self)
+        )
+        if graphics_view is not None:
+            self.setObjectName("compareCurrentPane")
+            self.label.setText(self.tr("★ CURRENT"))
+            self.make_current_button.hide()
+            self.close_button.hide()
         self.graphics_view.setMinimumSize(0, 0)
         layout.addWidget(self.graphics_view, 1)
 

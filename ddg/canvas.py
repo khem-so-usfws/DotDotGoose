@@ -59,6 +59,7 @@ HistoryEvent: TypeAlias = tuple[object, ...]
 
 
 class Canvas(QtWidgets.QGraphicsScene):
+    grid_display_changed: QtCore.pyqtSignal = QtCore.pyqtSignal()
     point_display_changed: QtCore.pyqtSignal = QtCore.pyqtSignal()
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
     image_loaded = QtCore.pyqtSignal(str, str)  # Params (directory, image_name)
@@ -1656,6 +1657,8 @@ class Canvas(QtWidgets.QGraphicsScene):
                             count_regions=regions,
                         )
 
+        self._display_point_selection()
+
     def export_counts(self, file_name):
         if self.current_image_name is not None:
             file = open(file_name, 'w')
@@ -2256,30 +2259,35 @@ class Canvas(QtWidgets.QGraphicsScene):
         Args:
             rect: Scene-coordinate selection rectangle.
         """
-        self.selection = []
-        self.display_points()
-        current: dict[str, list[QtCore.QPointF]] = self.points[
-            self.current_image_name
+        current: dict[str, list[QtCore.QPointF]] = self.points.get(
+            self.current_image_name, {}
+        )
+        self.selection = [
+            (class_name, point)
+            for class_name, points in current.items()
+            for point in points
+            if rect.contains(point)
         ]
-        for class_name in current:
-            for point in current[class_name]:
-                if rect.contains(point):
-                    # A fixed screen-size, two-tone marker stays visible at
-                    # overview zoom and against both light and dark imagery.
-                    for color, width in (("black", 6.0), ("yellow", 2.0)):
-                        pen: QtGui.QPen = QtGui.QPen(QtGui.QColor(color), width)
-                        pen.setCosmetic(True)
-                        marker: QtWidgets.QGraphicsRectItem = self.addRect(
-                            QtCore.QRectF(-12, -12, 24, 24), pen
-                        )
-                        marker.setPos(point)
-                        marker.setFlag(
-                            QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
-                        )
-                        marker.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
-                        marker.setData(0, "ddg_selected_bird_point")
-                        marker.setZValue(5.0 if color == "black" else 5.1)
-                    self.selection.append((class_name, point))
+        self.display_points()
+
+    def _display_point_selection(self) -> None:
+        """Redraw the accepted selection marker after overlay changes."""
+        for _class_name, point in self.selection:
+            # A fixed screen-size, two-tone marker stays visible at
+            # overview zoom and against both light and dark imagery.
+            for color, width in (("black", 6.0), ("yellow", 2.0)):
+                pen: QtGui.QPen = QtGui.QPen(QtGui.QColor(color), width)
+                pen.setCosmetic(True)
+                marker: QtWidgets.QGraphicsRectItem = self.addRect(
+                    QtCore.QRectF(-12, -12, 24, 24), pen
+                )
+                marker.setPos(point)
+                marker.setFlag(
+                    QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+                )
+                marker.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+                marker.setData(0, "ddg_selected_bird_point")
+                marker.setZValue(5.0 if color == "black" else 5.1)
 
     def set_current_class(self, class_index):
         if class_index is None or class_index >= len(self.classes):
@@ -2288,13 +2296,27 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.current_class_name = self.classes[class_index]
         self.display_points()
 
-    def set_grid_color(self, color):
-        self.ui['grid']['color'] = [color.red(), color.green(), color.blue()]
+    def set_grid_color(self, color: QtGui.QColor) -> None:
+        """Set the shared grid color and redraw.
+
+        Args:
+            color: New grid display value.
+        """
+        self.ui["grid"]["color"] = [color.red(), color.green(), color.blue()]
         self.display_grid()
 
-    def set_grid_size(self, size):
-        self.ui['grid']['size'] = size
+        self.grid_display_changed.emit()
+
+    def set_grid_size(self, size: int) -> None:
+        """Set shared grid spacing in source-image pixels.
+
+        Args:
+            size: New grid display value.
+        """
+        self.ui["grid"]["size"] = size
         self.display_grid()
+
+        self.grid_display_changed.emit()
 
     def set_point_color(self, color):
         self.ui['point']['color'] = [color.red(), color.green(), color.blue()]
@@ -2304,13 +2326,20 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.ui['point']['radius'] = radius
         self.display_points()
 
-    def toggle_grid(self, display):
+    def toggle_grid(self, display: bool) -> None:
+        """Show or hide grids in both image panes.
+
+        Args:
+            display: New grid display value.
+        """
         if display:
             self.show_grid = True
             self.display_grid()
         else:
             self.show_grid = False
             self.clear_grid()
+
+        self.grid_display_changed.emit()
 
     def toggle_points(self, display: bool) -> None:
         """Show or hide count-point graphics.
@@ -2319,11 +2348,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             display: Whether count points should be rendered.
         """
         self.show_points = bool(display)
-        if display:
-            self.display_points()
-            self.selection = []
-        else:
-            self.clear_points()
+        self.display_points()
 
     def undo(self) -> bool:
         """Undo the most recent local history event.

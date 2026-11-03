@@ -1110,8 +1110,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         if item is None:
             return
         try:
-            scene: QtWidgets.QGraphicsScene | None = item.scene()
-            if scene is not None:
+            # Inspect live scene items without dereferencing a deleted wrapper.
+            scene: QtWidgets.QGraphicsScene | None = self.scene()
+            if scene is not None and any(candidate is item for candidate in scene.items()):
                 scene.removeItem(item)
         except RuntimeError:
             # The scene may already have deleted the C++ item.
@@ -1161,8 +1162,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         if item is None:
             return
         try:
-            scene: QtWidgets.QGraphicsScene | None = item.scene()
-            if scene is not None:
+            # Inspect live scene items without dereferencing a deleted wrapper.
+            scene: QtWidgets.QGraphicsScene | None = self.scene()
+            if scene is not None and any(candidate is item for candidate in scene.items()):
                 scene.removeItem(item)
         except RuntimeError:
             # The scene may already have deleted the C++ item.
