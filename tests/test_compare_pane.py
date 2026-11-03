@@ -43,7 +43,7 @@ def test_reference_view_disables_count_point_placement(qtbot: Any) -> None:
 
 
 def test_compare_toggle_loads_one_reference_image(qtbot: Any, tmp_path: Path) -> None:
-    """Compare should add exactly one non-counting reference image."""
+    """Compare should add one editable reference image."""
     first: Path = tmp_path / "IMG_1001.JPG"
     second: Path = tmp_path / "IMG_1002.JPG"
     _write_image(first)
@@ -60,7 +60,7 @@ def test_compare_toggle_loads_one_reference_image(qtbot: Any, tmp_path: Path) ->
     assert widget.compare_enabled() is True
     assert widget.compare_pane.isHidden() is False
     assert widget.reference_canvas.current_image_name == second.name
-    assert widget.reference_graphics_view.count_point_placement_enabled is False
+    assert widget.reference_graphics_view.count_point_placement_enabled is True
     assert widget.current_compare_label.text().endswith(first.name)
 
 

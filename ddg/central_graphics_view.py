@@ -22,6 +22,7 @@
 # along with with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 # --------------------------------------------------------------------------
+import os
 from enum import Enum
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -105,6 +106,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             parent: Optional Qt parent widget.
         """
         QtWidgets.QGraphicsView.__init__(self, parent)
+        self.navigator_enabled: bool = False
+        self.navigator_image: QtGui.QImage = QtGui.QImage()
+        self.navigator_source_size: QtCore.QSize = QtCore.QSize()
+        self.navigator_path: str = ""
+
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.shift: bool = False
@@ -199,10 +205,102 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             directory: Source image directory.
             file_name: Loaded image basename.
         """
-        del directory, file_name
+        self.navigator_path = os.path.join(directory, file_name)
+        self.navigator_image = QtGui.QImage()
+        self.navigator_source_size = QtCore.QSize()
+        if self.navigator_enabled:
+            self._load_navigator_image()
         self.resetTransform()
         self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
         self.setSceneRect(self.scene().itemsBoundingRect())
+
+    def set_navigator_enabled(self, enabled: bool) -> None:
+        """Show or hide the read-only image overview.
+
+        Args:
+            enabled: Whether to paint the overview in this viewport.
+        """
+        self.navigator_enabled = enabled
+        # Repaint the fixed inset after scrolling instead of copying its pixels.
+        self.setViewportUpdateMode(
+            QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate
+            if enabled
+            else QtWidgets.QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate
+        )
+        if enabled and self.navigator_image.isNull():
+            self._load_navigator_image()
+        self.viewport().update()
+
+    def _load_navigator_image(self) -> None:
+        """Decode a bounded thumbnail while retaining source pixel dimensions."""
+        if not self.navigator_path:
+            return
+        reader: QtGui.QImageReader = QtGui.QImageReader(self.navigator_path)
+        self.navigator_source_size = reader.size()
+        if not self.navigator_source_size.isValid():
+            return
+        reader.setScaledSize(
+            self.navigator_source_size.scaled(
+                180, 130, QtCore.Qt.AspectRatioMode.KeepAspectRatio
+            )
+        )
+        self.navigator_image = reader.read()
+
+    def navigator_rect(self) -> QtCore.QRectF:
+        """Return the thumbnail rectangle in viewport coordinates."""
+        available: QtCore.QSize = QtCore.QSize(
+            min(180, max(0, self.viewport().width() - 24)),
+            min(130, max(0, self.viewport().height() - 24)),
+        )
+        size: QtCore.QSize = self.navigator_source_size.scaled(
+            available, QtCore.Qt.AspectRatioMode.KeepAspectRatio
+        )
+        return QtCore.QRectF(
+            self.viewport().width() - size.width() - 12,
+            self.viewport().height() - size.height() - 12,
+            size.width(),
+            size.height(),
+        )
+
+    def navigator_extent(self) -> QtCore.QRectF:
+        """Map the visible image extent into the inset rectangle."""
+        source: QtCore.QRectF = QtCore.QRectF(
+            QtCore.QPointF(), QtCore.QSizeF(self.navigator_source_size)
+        )
+        visible: QtCore.QRectF = (
+            self.mapToScene(self.viewport().rect()).boundingRect().intersected(source)
+        )
+        target: QtCore.QRectF = self.navigator_rect()
+        if source.isEmpty() or visible.isEmpty():
+            return QtCore.QRectF()
+        return QtCore.QRectF(
+            target.x() + visible.x() * target.width() / source.width(),
+            target.y() + visible.y() * target.height() / source.height(),
+            visible.width() * target.width() / source.width(),
+            visible.height() * target.height() / source.height(),
+        )
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        """Paint the image overview without intercepting pointer events.
+
+        Args:
+            event: Viewport paint event.
+        """
+        super().paintEvent(event)
+        if not self.navigator_enabled or self.navigator_image.isNull():
+            return
+        target: QtCore.QRectF = self.navigator_rect()
+        if target.isEmpty():
+            return
+        painter: QtGui.QPainter = QtGui.QPainter(self.viewport())
+        painter.fillRect(target.adjusted(-3, -3, 3, 3), QtGui.QColor(20, 20, 20, 220))
+        painter.drawImage(target, self.navigator_image)
+        extent: QtCore.QRectF = self.navigator_extent()
+        painter.setPen(QtGui.QPen(QtGui.QColor("black"), 4))
+        painter.drawRect(extent)
+        painter.setPen(QtGui.QPen(QtGui.QColor("yellow"), 2))
+        painter.drawRect(extent)
+        painter.end()
 
     def cancel_annotation(self) -> None:
         """Cancel any annotation interaction and return to count mode."""
@@ -229,6 +327,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         item references therefore need to be released before the canvas clears
         the scene during image navigation.
         """
+        self.navigator_path = ""
+        self.navigator_image = QtGui.QImage()
+        self.navigator_source_size = QtCore.QSize()
+
         self._clear_line_preview()
         self._clear_polygon_preview()
         self.line_points = []

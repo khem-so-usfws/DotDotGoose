@@ -360,6 +360,13 @@
              </widget>
             </item>
             <item>
+             <widget class="QScrollArea" name="scrollAreaCustomFields">
+              <property name="widgetResizable">
+               <bool>true</bool>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::NoFrame</enum>
+              </property>
              <widget class="QFrame" name="frameCustomFields">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
@@ -373,6 +380,7 @@
               <property name="frameShadow">
                <enum>QFrame::Plain</enum>
               </property>
+             </widget>
              </widget>
             </item>
            </layout>

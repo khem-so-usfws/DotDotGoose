@@ -64,7 +64,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
         self.point_widget: PointWidget = PointWidget(self.canvas, self)
         self.findChild(QtWidgets.QFrame, 'framePointWidget').layout().addWidget(self.point_widget)
-        self.point_widget.hide_custom_fields.connect(self.hide_custom_fields)
+        # Sidebar visibility is controlled by the persistent main toolbar.
+        self.point_widget.checkBoxImageFields.hide()
         self.canvas.saving.connect(self.display_quick_save)
 
         # Keyboard shortcuts
@@ -156,13 +157,13 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.canvas.directory_set.connect(self.display_working_directory)
 
         # Lightweight two-image comparison. The normal DDG canvas remains the
-        # authoritative Current image; this second canvas is annotation-only.
+        # authoritative Current image; both canvases share project count points.
         self._main_image_before_change: str | None = None
         self._last_reference_image_name: str | None = None
         self._compare_enabled: bool = False
         self.reference_canvas: Canvas = Canvas(self)
         self.reference_canvas.show_grid = False
-        self.reference_canvas.show_points = False
+        self.reference_canvas.show_points = True
         # Coordinate undo/redo chronologically across Current and Reference.
         self._global_undo_order: list[Canvas] = []
         self._global_redo_order: list[Canvas] = []
@@ -182,7 +183,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_graphics_view: CentralGraphicsView = (
             self.compare_pane.graphics_view
         )
-        self.reference_graphics_view.set_count_point_placement_enabled(False)
+        self.reference_graphics_view.set_count_point_placement_enabled(True)
         self.reference_graphics_view.setScene(self.reference_canvas)
         self._last_active_view_name: str = "current"
         self._pending_compare_annotation_mode: InteractionMode | None = None
@@ -208,6 +209,27 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_graphics_view.annotation_cancel_requested.connect(
             self._clear_pending_compare_annotation_tool
         )
+        self.reference_graphics_view.add_point.connect(self.reference_canvas.add_point)
+        self.reference_graphics_view.region_selected.connect(
+            self.reference_canvas.select_points
+        )
+        self.reference_graphics_view.delete_selection.connect(
+            self.reference_canvas.delete_selected_points
+        )
+        self.reference_graphics_view.relabel_selection.connect(
+            self.reference_canvas.relabel_selected_points
+        )
+        self.reference_graphics_view.switch_class.connect(
+            self.point_widget.set_active_class
+        )
+        self.reference_graphics_view.toggle_points.connect(
+            self.point_widget.checkBoxDisplayPoints.toggle
+        )
+        self.reference_canvas.update_point_count.connect(
+            self.point_widget.update_point_count
+        )
+        self.reference_canvas.history_recorded.connect(self._reference_points_edited)
+        self.canvas.point_display_changed.connect(self._sync_reference_points)
         self._connect_reference_annotation_signals()
         self.reference_canvas.image_about_to_change.connect(
             self.reference_graphics_view.prepare_for_image_change
@@ -305,6 +327,55 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
         self.lineEditSurveyId.textChanged.connect(self.canvas.update_survey_id)
         self.canvas.points_loaded.connect(self.lineEditSurveyId.setText)
+
+    def _sync_reference_points(self) -> None:
+        """Share project dots and class styling with the Reference canvas."""
+        self.reference_canvas.points = self.canvas.points
+        self.reference_canvas.classes = self.canvas.classes
+        self.reference_canvas.colors = self.canvas.colors
+        self.reference_canvas.ui = self.canvas.ui
+        self.reference_canvas.current_class_name = self.canvas.current_class_name
+        self.reference_canvas.show_points = self.canvas.show_points
+        self.reference_canvas.selection = []
+        self.reference_canvas.display_points()
+
+    def _reference_points_edited(self) -> None:
+        """Ensure reference edits participate in the project's save prompt."""
+        self.canvas.dirty = True
+
+    def move_selected_dots(self) -> None:
+        """Move the active pane's selected dots by a pixel displacement."""
+        canvas: Canvas
+        view: CentralGraphicsView
+        canvas, view = self._active_annotation_context()
+        if not canvas.selection:
+            return
+        dx: float
+        dy: float
+        accepted: bool
+        dx, accepted = QtWidgets.QInputDialog.getDouble(
+            self,
+            self.tr("Move selected dots"),
+            self.tr("Horizontal pixels"),
+            0,
+            -1000000,
+            1000000,
+            1,
+        )
+        if not accepted:
+            return
+        dy, accepted = QtWidgets.QInputDialog.getDouble(
+            self,
+            self.tr("Move selected dots"),
+            self.tr("Vertical pixels"),
+            0,
+            -1000000,
+            1000000,
+            1,
+        )
+        if accepted and (dx or dy):
+            canvas.move_selected_points(QtCore.QPointF(dx, dy))
+            self.canvas.dirty = True
 
     def _connect_reference_annotation_signals(self) -> None:
         """Connect annotation editing for the reference viewer."""
@@ -494,6 +565,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         Args:
             canvas: Canvas whose local undo/redo queues were cleared.
         """
+        if canvas is self.canvas:
+            self.reference_canvas.clear_queues()
+            self._sync_reference_points()
         self._global_undo_order = [
             item for item in self._global_undo_order if item is not canvas
         ]
@@ -507,6 +581,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return
         canvas: Canvas = self._global_undo_order.pop()
         if canvas.undo():
+            self.canvas.dirty = True
+            self.canvas.display_points()
             self._global_redo_order.append(canvas)
             return
         # A failed persistence operation leaves the local event untouched. Keep
@@ -519,6 +595,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return
         canvas: Canvas = self._global_redo_order.pop()
         if canvas.redo():
+            self.canvas.dirty = True
+            self.canvas.display_points()
             self._global_undo_order.append(canvas)
             return
         # Match undo failure semantics: preserve chronology and stop here.
@@ -677,7 +755,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         return names[0]
 
     def load_reference_image(self, image_name: str) -> None:
-        """Load one image into the annotation-only reference canvas.
+        """Load one image into the editable reference canvas.
 
         Args:
             image_name: Image basename from the current DDG working directory.
@@ -688,6 +766,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         image_path: str = os.path.join(self.canvas.directory, image_name)
         if not os.path.isfile(image_path):
             return
+        self._sync_reference_points()
         self.reference_canvas.directory = self.canvas.directory
         self.reference_canvas.load_image(image_path)
         self._last_reference_image_name = image_name
@@ -1044,35 +1123,58 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.lineEditX.setText('')
             self.lineEditY.setText('')
 
-    def display_custom_fields(self, fields):
+    def display_custom_fields(self, fields: list[list[str]]) -> None:
+        """Build scrollable custom fields with usable editor heights.
 
-        def build(item):
-            container = QtWidgets.QGroupBox(item[0], self)
+        Args:
+            fields: Field definitions containing a name and editor type.
+        """
+
+        def build(item: list[str]) -> QtWidgets.QGroupBox:
+            """Create one labeled editor that cannot collapse vertically."""
+            container: QtWidgets.QGroupBox = QtWidgets.QGroupBox(item[0], self)
             container.setObjectName(item[0])
             container.setLayout(QtWidgets.QVBoxLayout())
-            if item[1].lower() == 'line':
+            edit: LineText | BoxText
+            if item[1].lower() == "line":
                 edit = LineText(container)
+                edit.setMinimumHeight(edit.sizeHint().height())
             else:
                 edit = BoxText(container)
+                # Keep several text lines accessible at any display scaling.
+                edit.setMinimumHeight(
+                    3 * edit.fontMetrics().lineSpacing() + 2 * edit.frameWidth() + 8
+                )
             edit.update.connect(self.canvas.save_custom_field_data)
             self.load_custom_data.connect(edit.load_data)
             container.layout().addWidget(edit)
             return container
 
-        custom_fields = self.findChild(QtWidgets.QFrame, 'frameCustomFields')
+        custom_fields: QtWidgets.QFrame = self.findChild(
+            QtWidgets.QFrame, "frameCustomFields"
+        )
         if custom_fields.layout() is None:
             custom_fields.setLayout(QtWidgets.QVBoxLayout())
         else:
-            layout = custom_fields.layout()
+            layout: QtWidgets.QLayout = custom_fields.layout()
             while layout.count():
-                child = layout.takeAt(0)
+                child: QtWidgets.QLayoutItem = layout.takeAt(0)
                 if child.widget():
                     child.widget().deleteLater()
 
+        # Propagate field minimum heights to the scroll area's content widget.
+        custom_fields.layout().setSizeConstraint(
+            QtWidgets.QLayout.SizeConstraint.SetMinimumSize
+        )
         for item in fields:
-            widget = build(item)
+            widget: QtWidgets.QGroupBox = build(item)
             custom_fields.layout().addWidget(widget)
-        v = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding)
+        v: QtWidgets.QSpacerItem = QtWidgets.QSpacerItem(
+            20,
+            40,
+            QtWidgets.QSizePolicy.Policy.Minimum,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         custom_fields.layout().addItem(v)
         self.get_custom_field_data()
 

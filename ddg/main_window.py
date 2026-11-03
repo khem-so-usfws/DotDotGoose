@@ -51,6 +51,48 @@ class MainWindow(QtWidgets.QMainWindow):
 
         view_menu: QtWidgets.QMenu = self.menuBar().addMenu(self.tr("View"))
         view_menu.setObjectName("View")
+        self.navigator_action: QtGui.QAction = view_menu.addAction(
+            self.tr("Show Image Navigators")
+        )
+        self.navigator_action.setCheckable(True)
+        self.navigator_action.toggled.connect(
+            self.centralWidget().graphicsView.set_navigator_enabled
+        )
+        self.navigator_action.toggled.connect(
+            self.centralWidget().reference_graphics_view.set_navigator_enabled
+        )
+
+        sidebar_toolbar: QtWidgets.QToolBar = self.addToolBar(self.tr("Sidebars"))
+        sidebar_toolbar.setObjectName("sidebarToolbar")
+        sidebar_toolbar.setMovable(False)
+        sidebar_toolbar.setFloatable(False)
+        self.left_sidebar_action: QtGui.QAction = view_menu.addAction(
+            self.tr("Left Sidebar")
+        )
+        self.left_sidebar_action.setCheckable(True)
+        self.left_sidebar_action.setChecked(True)
+        self.left_sidebar_action.setToolTip(self.tr("Show or hide classes and counts"))
+        self.left_sidebar_action.toggled.connect(
+            self.centralWidget().framePointWidget.setVisible
+        )
+        sidebar_toolbar.addAction(self.left_sidebar_action)
+        self.right_sidebar_action: QtGui.QAction = view_menu.addAction(
+            self.tr("Right Sidebar")
+        )
+        self.right_sidebar_action.setCheckable(True)
+        self.right_sidebar_action.setChecked(True)
+        self.right_sidebar_action.setToolTip(
+            self.tr("Show or hide image data and custom fields")
+        )
+        self.right_sidebar_action.toggled.connect(
+            self.centralWidget().frameCustomField.setVisible
+        )
+        sidebar_toolbar.addAction(self.right_sidebar_action)
+        move_dots_action: QtGui.QAction = view_menu.addAction(
+            self.tr("Move Selected Dots…")
+        )
+        move_dots_action.triggered.connect(self.centralWidget().move_selected_dots)
+        view_menu.addSeparator()
         self.compare_action: QtGui.QAction = view_menu.addAction(
             self.tr("Compare Image")
         )

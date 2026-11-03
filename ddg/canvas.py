@@ -59,6 +59,7 @@ HistoryEvent: TypeAlias = tuple[object, ...]
 
 
 class Canvas(QtWidgets.QGraphicsScene):
+    point_display_changed: QtCore.pyqtSignal = QtCore.pyqtSignal()
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
     image_loaded = QtCore.pyqtSignal(str, str)  # Params (directory, image_name)
     image_about_to_change: QtCore.pyqtSignal = QtCore.pyqtSignal()
@@ -110,12 +111,6 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.show_grid: bool = True
         self.show_points: bool = True
 
-        self.selected_pen: QtGui.QPen = QtGui.QPen(
-            QtGui.QBrush(
-                QtCore.Qt.GlobalColor.red, QtCore.Qt.BrushStyle.SolidPattern
-            ),
-            1,
-        )
         self.external_annotations: list[Annotation] = []
         self.external_annotation_document: LabelMeDocument | None = None
         self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
@@ -227,6 +222,26 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.selection = []
             self.display_points()
             self.dirty = True
+
+    def move_selected_points(self, offset: QtCore.QPointF) -> None:
+        """Move selected dots and record their original coordinates.
+
+        Args:
+            offset: Displacement in source-image pixels.
+        """
+        if not self.selection or self.current_image_name is None:
+            return
+        moves: list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]] = [
+            (point, QtCore.QPointF(point), point + offset)
+            for _class_name, point in self.selection
+        ]
+        for point, _before, after in moves:
+            point.setX(after.x())
+            point.setY(after.y())
+        self._append_history_event(("move_points", self.current_image_name, moves))
+        self.selection = []
+        self.display_points()
+        self.dirty = True
 
     def delete_custom_field(self, field):
         if field in self.custom_fields['data']:
@@ -1599,24 +1614,29 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def display_points(self) -> None:
         """Render count points, selections, and count-region warnings."""
+        self.point_display_changed.emit()
         self.clear_points()
         if not self.show_points:
             return
         if self.current_image_name in self.points:
-            highlight_outside: bool = (
-                self.highlight_outside_count_region_points_enabled()
-            )
+            highlight_outside: bool = self.highlight_outside_count_region_points_enabled()
             regions: list[Annotation] = (
                 count_region_polygons(self.external_annotations)
                 if highlight_outside
                 else []
             )
-            active_color = QtGui.QColor(self.ui['point']['color'][0], self.ui['point']['color'][1], self.ui['point']['color'][2])
+            active_color = QtGui.QColor(
+                self.ui["point"]["color"][0],
+                self.ui["point"]["color"][1],
+                self.ui["point"]["color"][2],
+            )
             active_brush = QtGui.QBrush(active_color, QtCore.Qt.BrushStyle.SolidPattern)
             active_pen = QtGui.QPen(active_brush, 2)
             for class_name in self.points[self.current_image_name]:
                 points = self.points[self.current_image_name][class_name]
-                brush = QtGui.QBrush(self.colors[class_name], QtCore.Qt.BrushStyle.SolidPattern)
+                brush = QtGui.QBrush(
+                    self.colors[class_name], QtCore.Qt.BrushStyle.SolidPattern
+                )
                 pen = QtGui.QPen(brush, 2)
                 for point in points:
                     if class_name == self.current_class_name:
@@ -1806,9 +1826,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.current_image_name = None
         self.image_cache = {"file_name": "", "channels": 0, "data": None}
 
-    def load_image(
-        self, in_file_name: str | QtCore.QUrl, redraw: bool = False
-    ) -> None:
+    def load_image(self, in_file_name: str | QtCore.QUrl, redraw: bool = False) -> None:
         """Load or redraw one source image in the scene.
 
         Args:
@@ -1820,7 +1838,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         if isinstance(file_name, QtCore.QUrl):
             file_name = in_file_name.toLocalFile()
 
-        if self.directory == '':
+        if self.directory == "":
             self.directory = os.path.split(file_name)[0]
             self.directory_set.emit(self.directory)
 
@@ -1836,14 +1854,14 @@ class Canvas(QtWidgets.QGraphicsScene):
             if self.current_image_name not in self.points:
                 self.points[self.current_image_name] = {}
             try:
-                if self.image_cache['file_name'] != file_name:
-                    self.image_cache['file_name'] = file_name
+                if self.image_cache["file_name"] != file_name:
+                    self.image_cache["file_name"] = file_name
                     img = Image.open(file_name)
-                    self.image_cache['channels'] = len(img.getbands())
-                    self.image_cache['data'] = np.array(img)
+                    self.image_cache["channels"] = len(img.getbands())
+                    self.image_cache["data"] = np.array(img)
                     img.close()
-                channels = self.image_cache['channels']
-                array = self.image_cache['data']
+                channels = self.image_cache["channels"]
+                array = self.image_cache["data"]
                 if not redraw:
                     self.generate_lookup_table(0, 0)
                 if array.shape[0] > 10000 or array.shape[1] > 10000:
@@ -1852,19 +1870,36 @@ class Canvas(QtWidgets.QGraphicsScene):
                     stride = 100
                     max_stride = (array.shape[1] // stride) * stride
                     tail = array.shape[1] - max_stride
-                    tile = np.zeros((array.shape[0], stride, array.shape[2]), dtype=np.uint8)
+                    tile = np.zeros(
+                        (array.shape[0], stride, array.shape[2]), dtype=np.uint8
+                    )
                     for s in range(0, max_stride, stride):
-                        tile[:, :] = self.LUT[array[:, s:s + stride]]
-                        qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
+                        tile[:, :] = self.LUT[array[:, s : s + stride]]
+                        qt_image = QtGui.QImage(
+                            tile.data,
+                            tile.shape[1],
+                            tile.shape[0],
+                            QtGui.QImage.Format.Format_RGB888,
+                        )
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
                         item.setZValue(-10.0)
                         item.moveBy(s, 0)
                     # Fix for windows, thin slivers at the end cause the app to hang. QImage bug?
                     if tail > 0:
-                        tile = np.ones((array.shape[0], stride, array.shape[2]), dtype=np.uint8) * 255
-                        tile[:, 0:tail] = array[:, max_stride:array.shape[1]]
-                        qt_image = QtGui.QImage(tile.data, tile.shape[1], tile.shape[0], QtGui.QImage.Format.Format_RGB888)
+                        tile = (
+                            np.ones(
+                                (array.shape[0], stride, array.shape[2]), dtype=np.uint8
+                            )
+                            * 255
+                        )
+                        tile[:, 0:tail] = array[:, max_stride : array.shape[1]]
+                        qt_image = QtGui.QImage(
+                            tile.data,
+                            tile.shape[1],
+                            tile.shape[0],
+                            QtGui.QImage.Format.Format_RGB888,
+                        )
                         pixmap = QtGui.QPixmap.fromImage(qt_image)
                         item = self.addPixmap(pixmap)
                         item.setZValue(-10.0)
@@ -1872,29 +1907,49 @@ class Canvas(QtWidgets.QGraphicsScene):
                 else:
                     self.image_loading.emit(False, redraw)
                     if channels == 1:
-                        qt_image = QtGui.QImage(array.data, array.shape[1], array.shape[0], QtGui.QImage.Format.Format_Grayscale8)
+                        qt_image = QtGui.QImage(
+                            array.data,
+                            array.shape[1],
+                            array.shape[0],
+                            QtGui.QImage.Format.Format_Grayscale8,
+                        )
                     else:
                         array = self.LUT[array]
                         bpl = int(array.nbytes / array.shape[0])
                         if array.shape[2] == 4:
-                            qt_image = QtGui.QImage(array.data, array.shape[1], array.shape[0], QtGui.QImage.Format.Format_RGBA8888)
+                            qt_image = QtGui.QImage(
+                                array.data,
+                                array.shape[1],
+                                array.shape[0],
+                                QtGui.QImage.Format.Format_RGBA8888,
+                            )
                         else:
-                            qt_image = QtGui.QImage(array.data, array.shape[1], array.shape[0], bpl, QtGui.QImage.Format.Format_RGB888)
+                            qt_image = QtGui.QImage(
+                                array.data,
+                                array.shape[1],
+                                array.shape[0],
+                                bpl,
+                                QtGui.QImage.Format.Format_RGB888,
+                            )
                     pixmap: QtGui.QPixmap = QtGui.QPixmap.fromImage(qt_image)
-                    image_item: QtWidgets.QGraphicsPixmapItem = self.addPixmap(
-                        pixmap
-                    )
+                    image_item: QtWidgets.QGraphicsPixmapItem = self.addPixmap(pixmap)
                     image_item.setZValue(-10.0)
                 self.display_external_annotations(file_name, refresh_points=False)
                 self.display_grid()
                 self.display_points()
             except FileNotFoundError:
-                QtWidgets.QMessageBox.critical(None, self.tr('File Not Found'), '{} {}'.format(self.current_image_name, self.tr('is not in the same folder as the point file.')))
+                QtWidgets.QMessageBox.critical(
+                    None,
+                    self.tr("File Not Found"),
+                    "{} {}".format(
+                        self.current_image_name,
+                        self.tr("is not in the same folder as the point file."),
+                    ),
+                )
                 if not redraw:
                     self.image_loaded.emit(self.directory, self.current_image_name)
             if not redraw:
                 self.image_loaded.emit(self.directory, self.current_image_name)
-                self.clear_queues()
             QtWidgets.QApplication.restoreOverrideCursor()
 
     def load_images(self, images):
@@ -1986,6 +2041,18 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         event: HistoryEvent = self.redo_queue.pop()
+        if event[0] == "move_points":
+            moves: list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]] = cast(
+                list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]], event[2]
+            )
+            for move in moves:
+                move[0].setX(move[2].x())
+                move[0].setY(move[2].y())
+            self.selection = []
+            self.display_points()
+            self.dirty = True
+            self.undo_queue.append(event)
+            return True
         if event[0] == "add":
             image_name: str = str(event[1])
             class_name: str = str(event[2])
@@ -2194,22 +2261,24 @@ class Canvas(QtWidgets.QGraphicsScene):
         current: dict[str, list[QtCore.QPointF]] = self.points[
             self.current_image_name
         ]
-        display_radius: int | float = self.ui["point"]["radius"]
         for class_name in current:
             for point in current[class_name]:
                 if rect.contains(point):
-                    offset: int | float = (display_radius + 6) // 2
-                    selected_item: QtWidgets.QGraphicsEllipseItem = self.addEllipse(
-                        QtCore.QRectF(
-                            point.x() - offset,
-                            point.y() - offset,
-                            display_radius + 6,
-                            display_radius + 6,
-                        ),
-                        self.selected_pen,
-                    )
-                    selected_item.setData(0, "ddg_selected_bird_point")
-                    selected_item.setZValue(1.5)
+                    # A fixed screen-size, two-tone marker stays visible at
+                    # overview zoom and against both light and dark imagery.
+                    for color, width in (("black", 6.0), ("yellow", 2.0)):
+                        pen: QtGui.QPen = QtGui.QPen(QtGui.QColor(color), width)
+                        pen.setCosmetic(True)
+                        marker: QtWidgets.QGraphicsRectItem = self.addRect(
+                            QtCore.QRectF(-12, -12, 24, 24), pen
+                        )
+                        marker.setPos(point)
+                        marker.setFlag(
+                            QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+                        )
+                        marker.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
+                        marker.setData(0, "ddg_selected_bird_point")
+                        marker.setZValue(5.0 if color == "black" else 5.1)
                     self.selection.append((class_name, point))
 
     def set_current_class(self, class_index):
@@ -2266,6 +2335,18 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         event: HistoryEvent = self.undo_queue.pop()
+        if event[0] == "move_points":
+            moves: list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]] = cast(
+                list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]], event[2]
+            )
+            for move in moves:
+                move[0].setX(move[1].x())
+                move[0].setY(move[1].y())
+            self.selection = []
+            self.display_points()
+            self.dirty = True
+            self.redo_queue.append(event)
+            return True
         if event[0] == "add":
             image_name: str = str(event[1])
             class_name: str = str(event[2])
