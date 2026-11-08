@@ -240,3 +240,12 @@ above.
 - Julie Young — https://github.com/julieyoung6
 - Ștefan Istrate — https://github.com/stefanistrate
 - Khem So — https://github.com/khem-so-usfws
+
+
+### Image rotation
+
+Use the ↶ and ↷ buttons in either pane header to rotate that view by 90 degrees.
+Dots, grids, native annotations, and the navigator follow the image. Fit and 1:1
+retain the angle. Each newly opened image starts upright. Rotation is a viewing
+preference for the current session; saved dots and annotations use original
+source-image coordinates. Rotation does not modify the source image file.

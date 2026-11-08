@@ -76,6 +76,16 @@ class ComparePane(QtWidgets.QFrame):
         self.actual_size_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
             self.tr("1:1"), self
         )
+        self.rotate_left_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
+            "↶", self
+        )
+        self.rotate_left_button.setToolTip(self.tr("Rotate view 90° left"))
+        self.rotate_right_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
+            "↷", self
+        )
+        self.rotate_right_button.setToolTip(self.tr("Rotate view 90° right"))
+        self.rotate_left_button.setMaximumWidth(32)
+        self.rotate_right_button.setMaximumWidth(32)
         self.close_button: QtWidgets.QPushButton = QtWidgets.QPushButton("×", self)
         self.close_button.setToolTip(self.tr("Hide comparison pane"))
         self.close_button.setMaximumWidth(30)
@@ -86,6 +96,8 @@ class ComparePane(QtWidgets.QFrame):
             self.make_current_button,
             self.fit_button,
             self.actual_size_button,
+            self.rotate_left_button,
+            self.rotate_right_button,
             self.close_button,
         ):
             header.addWidget(button)
@@ -109,6 +121,12 @@ class ComparePane(QtWidgets.QFrame):
         self.fit_button.clicked.connect(self.fit_image)
         self.actual_size_button.clicked.connect(self.actual_size)
         self.close_button.clicked.connect(self.hide_requested.emit)
+        self.rotate_left_button.clicked.connect(
+            lambda: self.graphics_view.rotate_view(False)
+        )
+        self.rotate_right_button.clicked.connect(
+            lambda: self.graphics_view.rotate_view(True)
+        )
 
     def set_images(self, image_names: list[str], selected: str | None = None) -> None:
         """Replace selectable image names without emitting a load request.
@@ -164,18 +182,12 @@ class ComparePane(QtWidgets.QFrame):
         self.image_combo.setCurrentIndex(index)
 
     def fit_image(self) -> None:
-        """Fit the reference image to the available viewport."""
-        scene: QtWidgets.QGraphicsScene | None = self.graphics_view.scene()
-        if scene is None or not scene.items():
-            return
-        self.graphics_view.resetTransform()
-        self.graphics_view.fitInView(
-            scene.itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
-        )
+        """Fit this pane's image while retaining its rotation."""
+        self.graphics_view.fit_image()
 
     def actual_size(self) -> None:
-        """Display the reference image at a 1:1 scene/view scale."""
-        self.graphics_view.resetTransform()
+        """Display this pane at 1:1 while retaining its rotation."""
+        self.graphics_view.actual_size()
 
     def _request_selected_image(self, image_name: str) -> None:
         """Emit a non-empty selector change.

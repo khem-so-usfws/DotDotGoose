@@ -3,6 +3,14 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.8.7
+
+- Add independent 90-degree left/right view rotation in both pane headers.
+- Rotate images, dots, grids, and native annotations together.
+- Retain rotation through Fit, 1:1, pan, and zoom.
+- Rotate navigator thumbnails and their viewport outlines.
+- Open each image upright and preserve source-image coordinates when editing.
+
 ## 1.8.6
 
 - Add matching Current and Reference image pickers, Prev/Next, Fit, and 1:1 controls.

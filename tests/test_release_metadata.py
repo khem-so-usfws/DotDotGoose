@@ -10,9 +10,9 @@ from ddg import __version__
 from ddg.about_dialog import AboutDialog
 
 
-def test_release_version_is_1_8_6() -> None:
-    """The application should advertise the fork release as version 1.8.6."""
-    assert __version__ == "1.8.6"
+def test_release_version_is_1_8_7() -> None:
+    """The application should advertise the fork release as version 1.8.7."""
+    assert __version__ == "1.8.7"
 
 
 def test_about_dialog_lists_khem_so_as_contributor(qtbot: Any) -> None:

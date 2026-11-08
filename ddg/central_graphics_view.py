@@ -106,6 +106,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             parent: Optional Qt parent widget.
         """
         QtWidgets.QGraphicsView.__init__(self, parent)
+        self.rotation_degrees: int = 0
         self.navigator_enabled: bool = False
         self.navigator_image: QtGui.QImage = QtGui.QImage()
         self.navigator_source_size: QtCore.QSize = QtCore.QSize()
@@ -210,9 +211,39 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.navigator_source_size = QtCore.QSize()
         if self.navigator_enabled:
             self._load_navigator_image()
-        self.resetTransform()
-        self.fitInView(self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        self.rotation_degrees = 0
+        self.fit_image()
         self.setSceneRect(self.scene().itemsBoundingRect())
+
+    def rotate_view(self, clockwise: bool) -> None:
+        """Rotate this image view by a quarter turn around its current center.
+
+        Args:
+            clockwise: True for a right turn, False for a left turn.
+        """
+        if self.scene() is None or not self.scene().items():
+            return
+        center: QtCore.QPointF = self.mapToScene(self.viewport().rect().center())
+        degrees: int = 90 if clockwise else -90
+        self.rotation_degrees = (self.rotation_degrees + degrees) % 360
+        self.rotate(degrees)
+        self.centerOn(center)
+        self.viewport().update()
+
+    def actual_size(self) -> None:
+        """Restore one source pixel per view pixel while retaining rotation."""
+        center: QtCore.QPointF = self.mapToScene(self.viewport().rect().center())
+        self.setTransform(QtGui.QTransform().rotate(self.rotation_degrees))
+        self.centerOn(center)
+
+    def fit_image(self) -> None:
+        """Fit the full scene while retaining the pane's rotation."""
+        if self.scene() is None or not self.scene().items():
+            return
+        self.setTransform(QtGui.QTransform().rotate(self.rotation_degrees))
+        self.fitInView(
+            self.scene().itemsBoundingRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio
+        )
 
     def set_navigator_enabled(self, enabled: bool) -> None:
         """Show or hide the read-only image overview.
@@ -252,7 +283,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             min(180, max(0, self.viewport().width() - 24)),
             min(130, max(0, self.viewport().height() - 24)),
         )
-        size: QtCore.QSize = self.navigator_source_size.scaled(
+        source_size: QtCore.QSize = QtCore.QSize(self.navigator_source_size)
+        if self.rotation_degrees % 180:
+            source_size.transpose()
+        size: QtCore.QSize = source_size.scaled(
             available, QtCore.Qt.AspectRatioMode.KeepAspectRatio
         )
         return QtCore.QRectF(
@@ -270,6 +304,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         visible: QtCore.QRectF = (
             self.mapToScene(self.viewport().rect()).boundingRect().intersected(source)
         )
+        rotation: QtGui.QTransform = QtGui.QTransform().rotate(self.rotation_degrees)
+        rotated_source: QtCore.QRectF = rotation.mapRect(source)
+        visible = rotation.mapRect(visible).translated(-rotated_source.topLeft())
+        source = QtCore.QRectF(QtCore.QPointF(), rotated_source.size())
         target: QtCore.QRectF = self.navigator_rect()
         if source.isEmpty() or visible.isEmpty():
             return QtCore.QRectF()
@@ -294,7 +332,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             return
         painter: QtGui.QPainter = QtGui.QPainter(self.viewport())
         painter.fillRect(target.adjusted(-3, -3, 3, 3), QtGui.QColor(20, 20, 20, 220))
-        painter.drawImage(target, self.navigator_image)
+        thumbnail: QtGui.QImage = self.navigator_image.transformed(
+            QtGui.QTransform().rotate(self.rotation_degrees)
+        )
+        painter.drawImage(target, thumbnail)
         extent: QtCore.QRectF = self.navigator_extent()
         painter.setPen(QtGui.QPen(QtGui.QColor("black"), 4))
         painter.drawRect(extent)
