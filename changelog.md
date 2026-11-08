@@ -3,6 +3,89 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.8.9
+
+### Toolbar order, folder path, and quiet status (same version)
+
+- Order the toolbar as Panels, Display, and Tools, with literal pipe dividers
+  between these groups. Keep spacing-only subgroups within Tools.
+- Order tools as Landmark, Line, Polygon, Select/Edit, Count dots, and Class.
+  Preserve one exclusive tool group and the same order in compact menus.
+- Allocate visible row space to the working-directory path; abbreviate long
+  paths in the middle, with a full-path tooltip and Copy full path context action.
+- Restore the right sidebar's legacy one-quarter share of space remaining after
+  the left sidebar, while preserving manual splitter adjustments.
+- Leave save status blank when idle; show Saved for five seconds after a confirmed
+  save and retain unsaved-change and failure messages until resolved.
+
+### Layout polish (same version)
+
+- Restore the left sidebar's 425-pixel starting width while retaining resizing.
+- Restore the original folder button, Working Directory caption, and path row.
+- Move the selected-class indicator beside Count dots, or beside the active-tool
+  selector in compact toolbar layouts.
+- Give Recover a recovery icon and match Recover/Export menu-button styling,
+  with project-button icons and text aligned left.
+
+### Responsive layout and active-image data revision (same version)
+
+- Bind image coordinates and custom-field values to the active Current or
+  Reference pane. Keep Survey ID project-wide and label the image-data target.
+- Flush delayed field edits before pane/image changes, save, recovery, or reset;
+  mark pending text as unsaved immediately and clear absent image values.
+- Add sidebar splitter handles and smaller usable minimum widths, keeping both
+  panels open on startup.
+- Move pane controls into More as space narrows and restore them when widened.
+- Compact toolbar groups into menus as needed, retaining the active tool and
+  preserving menu commands, shortcuts, and checked states.
+- Replace Export radio choices with an Export menu and compact project buttons.
+- Replace the working-directory row with a status-bar folder indicator/menu and
+  keep selected-class and save-state indicators visible beside contextual guidance.
+
+### Compare and unified editing revision (same version)
+
+- Add a Compare split button beside the panel toggles. Its main button toggles
+  Reference and its arrow offers synchronized side-by-side/stacked layouts.
+- Extend Select/Edit to dots, annotations, and mixed selections in either pane.
+- Support click selection, Shift+click toggling, additive Shift+drag box selection,
+  selected-item dragging, Delete/Backspace, and Escape to clear selection.
+- Retain single-annotation vertex editing and right-click vertex operations.
+- Treat group moves/deletions as one undoable edit; persist annotation changes
+  before mutating dots so failed writes cannot partially edit a selection.
+- Block group edits containing locked annotations and resolve ambiguous overlaps
+  with a chooser. Preserve selections after moving them.
+- Rename precise numeric movement to Move by pixel offset and offer it in the
+  selection menu alongside direct dragging.
+
+### UI revision (same version)
+
+- Group the main toolbar into Panels, mutually exclusive Tools, and Display.
+- Share Count dots, Landmark, Line, Polygon, and Select/Edit across both panes.
+- Keep drawing/editing tools active after completion or Escape; Escape clears
+  a selection or cancels a draft. Count dots explicitly returns to counting.
+- Preserve unfinished geometry when a tool is reselected or a different tool,
+  pane, image, or Reference-hide command is requested.
+- Compress each pane header to two rows. Move secondary pane actions to a
+  More menu and show dot/annotation selections with contextual actions.
+- Remove duplicate sidebar visibility checkboxes for dots and grid.
+- Move Recover into the existing project controls and save/recovery feedback
+  into the bottom status bar; show snapshot details in menus/tooltips.
+
+
+- Add independent Enhance dialogs in both pane headers, with Apply, Reset,
+  and original-image preview. Remember adjustments per image during the session.
+- Preserve zoom, rotation, and dot selections during enhancement redraws.
+- Show the active pane, current tool/class, and selected-dot totals/class counts.
+- Add pane-local selected-dot Move, Delete, and Clear selection menus.
+- Transfer completed drawing tools on the first click in the other pane; retain
+  unfinished shapes and explain how to finish or cancel them.
+- Remember each pane's zoom, pan, and rotation per image during the session,
+  with Reset view to return upright and fit.
+- Report confirmed saves, unsaved point/field changes, and save failures.
+- Save point files atomically and create separate two-minute recovery snapshots
+  for unsaved points/fields, retaining the preceding snapshot.
+- Add Recover snapshot to open a snapshot and prompt for a new save destination.
+
 ## 1.8.8
 
 - Remove the duplicate filename from the Current pane heading.

@@ -249,3 +249,33 @@ Dots, grids, native annotations, and the navigator follow the image. Fit and 1:1
 retain the angle. Each newly opened image starts upright. Rotation is a viewing
 preference for the current session; saved dots and annotations use original
 source-image coordinates. Rotation does not modify the source image file.
+
+### Workspace improvements (1.8.9)
+
+Both panes have independent Enhance controls, active tool/class and selection
+feedback, remembered session views, and Reset view. Confirmed save status and
+separate recovery snapshots help protect unsaved point/field edits. See
+[the compare-pane guide](docs/compare_pane.md#workspace-feedback-and-recovery-189).
+
+The 1.8.9 UI revision groups shared tools and display toggles in the main toolbar.
+Pane headers use two rows; secondary actions are in More (⋯). Recover is beside
+the existing project buttons, with save/recovery feedback in the status bar.
+Tools stay selected across both panes; Esc cancels a draft or clears selection,
+and Count dots explicitly returns to counting.
+
+The next 1.8.9 follow-up adds a Compare visibility/layout split button beside the
+panel toggles. Select/Edit now selects, drags, and deletes dots and annotations
+using the same gestures, including mixed groups and single-step undo/redo.
+
+The responsive-layout follow-up keeps 1.8.9 and connects the right sidebar to the
+active image, safely commits pending field text, adds resizable sidebars and
+adaptive overflow, and compacts Export controls. The folder button and Working Directory path row
+appear below the images. The left sidebar starts at 425 px and remains resizable.
+The selected class appears beside Count dots (or the compact tool selector), while
+save state remains in the status bar. Recover and Export share left-aligned
+icon/text menu-button styling.
+
+The toolbar-order follow-up keeps version 1.8.9: Panels, Display, and Tools are
+separated by pipes; Tools uses Landmark/Line/Polygon, Select/Edit, then Count dots
+and Class. The Working Directory path receives visible row space, the right
+sidebar starts with its legacy width proportion, and idle save status is blank.

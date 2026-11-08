@@ -116,3 +116,15 @@ The shape type and label are separate. Labels can be changed through Annotation 
 ## Compatibility
 
 The source image is never resampled or modified by native annotations. Coordinates remain in original-image pixel space, preserving compatibility with future training-data and multi-image colony workflows.
+
+## Shared toolbar tools (1.8.9 UI revision)
+
+The Tools toolbar exposes Count dots, Landmark, Line, Polygon, and Select/Edit.
+Choose one tool and use either pane directly. Drawing tools stay active after
+completion. Select/Edit handles dots and every annotation type without choosing
+a geometry type first. Shift+click toggles items, Shift+drag from empty space adds
+items fully enclosed by the box, and dragging an already-selected item moves the
+selected group. Delete/Backspace removes the group in one undoable action. Clicking empty space or pressing Esc clears selection
+while retaining the tool. Esc cancels an unfinished drawing and retains its tool;
+click Count dots to return to counting. Unfinished shapes must be finished or
+explicitly cancelled before changing tools, images, or hiding their pane.

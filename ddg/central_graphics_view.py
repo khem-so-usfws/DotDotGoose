@@ -118,6 +118,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.ctrl: bool = False
         self.alt: bool = False
         self.delay: int = 0
+        self.annotation_target_blocked: bool = False
+        self.persistent_mode: InteractionMode | None = None
         self.interaction_mode: InteractionMode = InteractionMode.COUNT
         self.line_points: list[QtCore.QPointF] = []
         self.line_preview_item: QtWidgets.QGraphicsPathItem | None = None
@@ -428,7 +430,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         ]
         self._clear_line_preview()
         self.line_points = []
-        self.interaction_mode = InteractionMode.COUNT
+        self.interaction_mode = self.persistent_mode or InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
         self.line_completed.emit(completed_points)
 
@@ -457,7 +459,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         ]
         self._clear_polygon_preview()
         self.polygon_points = []
-        self.interaction_mode = InteractionMode.COUNT
+        self.interaction_mode = self.persistent_mode or InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
         self.polygon_completed.emit(completed_points)
 
@@ -741,6 +743,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 return
             self.annotation_cancel_requested.emit()
             self.cancel_annotation()
+            if self.persistent_mode is not None:
+                self.external_annotation_selection_cleared.emit()
+                self.interaction_mode = self.persistent_mode
+                self.annotation_mode_changed.emit(self.interaction_mode.value)
+            event.accept()
             return
         if (
             event.key() in {QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter}
@@ -927,7 +934,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             # A Compare drawing tool can be armed before its target pane is
             # known. This synchronous request lets the container assign the
             # tool before this same click is interpreted as geometry.
+            self.annotation_target_blocked = False
             self.annotation_target_requested.emit()
+            if self.annotation_target_blocked:
+                event.accept()
+                return
 
         if self.interaction_mode is InteractionMode.SELECT:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
@@ -970,7 +981,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         if self.interaction_mode is InteractionMode.POINT:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
-                self.interaction_mode = InteractionMode.COUNT
+                self.interaction_mode = self.persistent_mode or InteractionMode.COUNT
                 self.annotation_mode_changed.emit(self.interaction_mode.value)
                 self.annotation_point_completed.emit(QtCore.QPointF(point))
                 event.accept()

@@ -28,6 +28,7 @@ def test_rotation_controls_and_point_coordinates(qtbot: Any, tmp_path: Path) -> 
         (widget.current_pane, widget.canvas),
         (widget.compare_pane, widget.reference_canvas),
     ):
+        widget.workspace_feedback.cancel_transfer()
         view: Any = pane.graphics_view
         view.set_navigator_enabled(True)
         for angle in (90, 180, 270, 0):

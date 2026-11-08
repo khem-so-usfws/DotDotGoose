@@ -102,14 +102,10 @@ class ComparePane(QtWidgets.QFrame):
         controls: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
         controls.setSpacing(4)
         for button in (
-            self.previous_button,
-            self.next_button,
-            self.make_current_button,
             self.fit_button,
             self.actual_size_button,
             self.rotate_left_button,
             self.rotate_right_button,
-            self.close_button,
         ):
             # Match control heights while allowing the image picker to shrink.
             button.setFixedHeight(self.image_combo.sizeHint().height())
@@ -120,6 +116,31 @@ class ComparePane(QtWidgets.QFrame):
             if button is self.fit_button:
                 controls.addStretch(1)
             controls.addWidget(button)
+        for button in (self.previous_button, self.next_button):
+            button.setFixedWidth(
+                button.fontMetrics().horizontalAdvance(button.text()) + 18
+            )
+            button.setFixedHeight(self.image_combo.sizeHint().height())
+            button.setAutoDefault(False)
+            header.addWidget(button)
+        self.overflow_button: QtWidgets.QToolButton = QtWidgets.QToolButton(self)
+        self.overflow_button.setText("⋯")
+        self.overflow_button.setToolTip(self.tr("More pane actions"))
+        self.overflow_button.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.overflow_menu: QtWidgets.QMenu = QtWidgets.QMenu(self.overflow_button)
+        self.overflow_button.setMenu(self.overflow_menu)
+        if graphics_view is None:
+            self.overflow_menu.addAction(
+                self.tr("Make Current"), self.make_current_button.click
+            )
+            self.overflow_menu.addAction(
+                self.tr("Hide Reference"), self.close_button.click
+            )
+        self.make_current_button.hide()
+        self.close_button.hide()
+        header.addWidget(self.overflow_button)
         layout.addLayout(header)
         layout.addLayout(controls)
 

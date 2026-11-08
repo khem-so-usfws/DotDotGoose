@@ -36,6 +36,8 @@ from ddg.count_region_qa_dialog import CountRegionQADialog
 from ddg.annotations import Annotation, AnnotationShape
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 from ddg.compare_pane import ComparePane
+from ddg.workspace_feedback import WorkspaceFeedback
+from ddg.responsive_workspace import ResponsiveWorkspace
 
 # from .ui_central_widget import Ui_central as CLASS_DIALOG
 if getattr(sys, 'frozen', False):
@@ -307,9 +309,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.quick_save_frame.setGeometry(3, 3, 100, 35)
         self.quick_save_frame.hide()
 
+        self.workspace_feedback: WorkspaceFeedback = WorkspaceFeedback(self)
         self.lineEditSurveyId.textChanged.connect(self.canvas.update_survey_id)
         self.canvas.points_loaded.connect(self.lineEditSurveyId.setText)
         self.canvas.points_loaded.connect(lambda _survey: self.refresh_compare_images())
+        self.workspace_layout: ResponsiveWorkspace = ResponsiveWorkspace(self)
 
     def load_current_image(self, image_name: str) -> None:
         """Switch Current through the existing canvas image lifecycle.
@@ -439,6 +443,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self._pending_compare_annotation_mode
         )
         if pending_mode is None:
+            if hasattr(self, "workspace_feedback"):
+                self.workspace_feedback.transfer_tool(view)
             return
 
         canvas: Canvas = (
@@ -502,6 +508,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_graphics_view.cancel_annotation()
         self._pending_compare_annotation_mode = mode
         self.annotation_tool_armed.emit(mode.value)
+        if hasattr(self, "workspace_feedback"):
+            self.workspace_feedback.transfer_mode = mode
         return True
 
     def _set_last_active_view(self, view_name: str) -> None:
@@ -516,6 +524,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         """
         if view_name in {"current", "reference"}:
             self._last_active_view_name = view_name
+            if hasattr(self, "workspace_layout"):
+                self.workspace_layout.bind_active()
+            if hasattr(self, "workspace_feedback"):
+                self.workspace_feedback.refresh()
 
     def _active_annotation_context(self) -> tuple[Canvas, CentralGraphicsView]:
         """Return the last-clicked canvas/view for annotation commands."""
@@ -621,6 +633,16 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             enabled: Whether comparison should be visible.
         """
         enabled = bool(enabled)
+        if (
+            not enabled
+            and hasattr(self, "workspace_feedback")
+            and self.workspace_feedback.controls is not None
+            and not self.workspace_feedback.controls.can_leave_image(
+                self.reference_graphics_view, self.reference_canvas
+            )
+        ):
+            self.compare_enabled_changed.emit(self._compare_enabled)
+            return
         if enabled == self._compare_enabled:
             return
         if enabled and not self.canvas.current_image_name:
@@ -806,6 +828,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     def cancel_annotation(self) -> None:
         """Cancel an armed tool or the last-clicked pane's annotation tool."""
+        if self.workspace_feedback.controls is not None:
+            self.workspace_feedback.controls.cancel_current()
+            return
+        self.workspace_feedback.cancel_transfer()
         if self._pending_compare_annotation_mode is not None:
             self._clear_pending_compare_annotation_tool()
             return
@@ -1121,7 +1147,16 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.delete_dialog.resize(250, self.delete_dialog.height())
         self.delete_dialog.show()
 
-    def display_coordinates(self, directory, image):
+    def display_coordinates(self, directory: str, image: str) -> None:
+        """Refresh coordinates using the active image binding.
+
+        Args:
+            directory: Directory reported by the image-load signal.
+            image: Image basename used by the legacy initialization fallback.
+        """
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.bind_active()
+            return
         if image in self.canvas.coordinates:
             self.lineEditX.setText(self.canvas.coordinates[image]['x'])
             self.lineEditY.setText(self.canvas.coordinates[image]['y'])
@@ -1135,6 +1170,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         Args:
             fields: Field definitions containing a name and editor type.
         """
+
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.flush()
 
         def build(item: list[str]) -> QtWidgets.QGroupBox:
             """Create one labeled editor that cannot collapse vertically."""
@@ -1151,7 +1189,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
                 edit.setMinimumHeight(
                     3 * edit.fontMetrics().lineSpacing() + 2 * edit.frameWidth() + 8
                 )
-            edit.update.connect(self.canvas.save_custom_field_data)
+            edit.update.connect(self.save_active_custom_field)
+            edit.edited.connect(self.mark_field_dirty)
             self.load_custom_data.connect(edit.load_data)
             container.layout().addWidget(edit)
             return container
@@ -1191,8 +1230,26 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.quick_save_frame.show()
         QtCore.QTimer.singleShot(500, self.quick_save_frame.hide)
 
-    def get_custom_field_data(self):
+    def get_custom_field_data(self) -> None:
+        """Load custom-field values for the bound active image."""
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.load_fields()
+            return
         self.load_custom_data.emit(self.canvas.get_custom_field_data())
+
+    def mark_field_dirty(self) -> None:
+        """Mark pending custom-field text as unsaved immediately."""
+        self.canvas.dirty = True
+
+    def save_active_custom_field(self, field: str, text: str) -> None:
+        """Route an editor update to its bound image rather than Current.
+
+        Args:
+            field: Project custom-field name.
+            text: Edited field value.
+        """
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.save_field(field, text)
 
     def hide_custom_fields(self, hide):
         if hide is True:
@@ -1205,7 +1262,15 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if name != '':
             self.canvas.load([QtCore.QUrl('file:{}'.format(name))])
 
-    def update_coordinates(self, text):
+    def update_coordinates(self, text: str) -> None:
+        """Save coordinate text against the active image binding.
+
+        Args:
+            text: Text reported by the coordinate editor.
+        """
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.save_coordinates()
+            return
         x = self.lineEditX.text()
         y = self.lineEditY.text()
         self.canvas.save_coordinates(x, y)

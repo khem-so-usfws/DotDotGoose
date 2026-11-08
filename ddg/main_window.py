@@ -27,6 +27,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ddg import AboutDialog, CentralWidget, __version__
 from ddg.annotation_symbology_dialog import AnnotationSymbologyDialog
 from ddg.annotations import AnnotationShape
+from ddg.central_graphics_view import InteractionMode
+from ddg.workspace_controls import WorkspaceControls
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -89,7 +91,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         sidebar_toolbar.addAction(self.right_sidebar_action)
         move_dots_action: QtGui.QAction = view_menu.addAction(
-            self.tr("Move Selected Dots…")
+            self.tr("Move Dots by Pixel Offset…")
         )
         move_dots_action.triggered.connect(self.centralWidget().move_selected_dots)
         view_menu.addSeparator()
@@ -139,7 +141,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         annotation_menu.setObjectName("Annotations")
         select_annotation_action: QtGui.QAction = annotation_menu.addAction(
-            self.tr("Select/Edit Annotation")
+            self.tr("Select/Edit Dots and Annotations")
         )
         select_annotation_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         select_annotation_action.triggered.connect(self.start_annotation_selection)
@@ -320,7 +322,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.menuBar().addSeparator()
 
-        self.menuBar().addAction(self.tr('About'), self.about_dialog.show)
+        self.menuBar().addAction(self.tr("About"), self.about_dialog.show)
+        self.workspace_controls: WorkspaceControls = WorkspaceControls(
+            self,
+            sidebar_toolbar,
+            {
+                InteractionMode.POINT: draw_landmark_action,
+                InteractionMode.LINE: draw_line_action,
+                InteractionMode.POLYGON: draw_polygon_action,
+                InteractionMode.SELECT: select_annotation_action,
+            },
+            self.navigator_action,
+        )
 
     def _compare_layout_changed(self, layout_name: str) -> None:
         """Keep compare-layout menu checks synchronized with the central view."""
@@ -340,7 +353,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     "handle to reshape it; right-click a shape/vertex for insert "
                     "or delete; locked annotations can be selected but not "
                     "moved; C+drag pans; Z/X+drag zoom; Ctrl+Z/Ctrl+Y "
-                    "undo/redo; Esc exits edit mode."
+                    "undo/redo; Esc clears selection; Count dots returns to counting."
                 )
             )
         elif mode == "point":
@@ -399,16 +412,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(message)
 
     def reference_annotation_mode_changed(self, mode: str) -> None:
-        """Show status guidance appropriate to the non-counting reference pane."""
-        if mode == "count":
-            self.statusBar().showMessage(
-                self.tr(
-                    "Reference image: count-point placement is disabled; "
-                    "C+drag pans; Z+drag zooms in; X+drag zooms out; "
-                    "annotation tools remain available."
-                )
-            )
-            return
+        """Show the same tool guidance for either editable pane.
+
+        Args:
+            mode: Reference pane's current interaction mode.
+        """
         self.annotation_mode_changed(mode)
 
     def show_annotation_help(self) -> None:
@@ -423,16 +431,21 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Mouse wheel: incremental zoom\n\n"
             "Compare image\n"
             "  View > Compare Image shows one reference image beside/below Current.\n"
-            "  Count points can be added only in Current.\n"
+            "  Count points can be added in either pane.\n"
             "  Choose Landmark/Cutline/Count Region, then click directly in "
             "either pane; the first click chooses the pane and starts drawing.\n"
             "  Native annotations can be edited in either pane.\n"
             "  Make Current swaps the reference with the Current image.\n\n"
             "Native annotations\n"
-            "  Landmark: one point\n"
+            "  Toolbar tools apply to both panes and stay selected.\n"
+            "  Count dots returns to counting; Esc clears selection/cancels a draft.\n"
+            "  Landmark: one point per click\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
             "  Count region: click vertices, Enter/double-click to finish\n"
-            "  Select/Edit: drag shapes or vertices; right-click for vertex edits\n"
+            "  Select/Edit: click dots or annotations; Shift+click toggles selection\n"
+            "  Shift+drag from empty space selects enclosed items\n"
+            "  Drag selected items to move; Delete removes; Esc clears selection\n"
+            "  Single selected annotations expose handles; right-click for vertex edits\n"
             "  C/Z/X navigation overrides also work while annotating\n"
             "  Ctrl+Z/Ctrl+Y: undo/redo edits chronologically across panes\n\n"
             "Count regions\n"
@@ -451,19 +464,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def start_annotation_selection(self) -> None:
         """Start native annotation selection/edit mode."""
-        self.centralWidget().start_annotation_selection()
+        self.centralWidget().workspace_feedback.controls.select_tool(
+            InteractionMode.SELECT
+        )
 
     def start_landmark_point(self) -> None:
         """Start native landmark point drawing."""
-        self.centralWidget().start_landmark_point()
+        self.centralWidget().workspace_feedback.controls.select_tool(
+            InteractionMode.POINT
+        )
 
     def start_cutline(self) -> None:
         """Start native cutline drawing."""
-        self.centralWidget().start_cutline()
+        self.centralWidget().workspace_feedback.controls.select_tool(
+            InteractionMode.LINE
+        )
 
     def start_count_region_polygon(self) -> None:
         """Start native count-region polygon drawing."""
-        self.centralWidget().start_count_region_polygon()
+        self.centralWidget().workspace_feedback.controls.select_tool(
+            InteractionMode.POLYGON
+        )
 
     def closeEvent(self, event):
         if self.centralWidget().canvas.dirty_data_check():

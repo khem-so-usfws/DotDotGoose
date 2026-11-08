@@ -26,7 +26,7 @@ import os
 import json
 import glob
 from copy import deepcopy
-from typing import Any, TypeAlias, cast
+from typing import Any, Callable, TypeAlias, cast
 
 import numpy as np
 
@@ -70,6 +70,7 @@ class Canvas(QtWidgets.QGraphicsScene):
     update_point_count = QtCore.pyqtSignal(str, str, int)  # Params (image_name, class, count)
     metadata_imported = QtCore.pyqtSignal()
     saving = QtCore.pyqtSignal()
+    save_finished: QtCore.pyqtSignal = QtCore.pyqtSignal(str, bool)
     history_recorded: QtCore.pyqtSignal = QtCore.pyqtSignal()
     history_cleared: QtCore.pyqtSignal = QtCore.pyqtSignal()
 
@@ -80,6 +81,8 @@ class Canvas(QtWidgets.QGraphicsScene):
             parent: Optional Qt parent object.
         """
         QtWidgets.QGraphicsScene.__init__(self, parent)
+        self.image_change_allowed: Callable[[], bool] | None = None
+        self.flush_fields: Callable[[], None] | None = None
         self.dirty: bool = False
         self.points: dict[str, dict[str, list[QtCore.QPointF]]] = {}
         self.colors: dict[str, QtGui.QColor] = {}
@@ -94,6 +97,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             "point": {"radius": 25, "color": [255, 255, 0]},
         }
 
+        self.enhancements: dict[str, tuple[int, int]] = {}
         self.survey_id: str = ""
 
         self.directory: str = ""
@@ -116,6 +120,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotation_document: LabelMeDocument | None = None
         self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
         self.external_annotation_handle_items: list[QtWidgets.QGraphicsItem] = []
+        self.selected_annotation_indices: set[int] = set()
         self.selected_external_annotation_index: int | None = None
         self.count_region_mask_item: QtWidgets.QGraphicsPathItem | None = None
 
@@ -256,8 +261,11 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.fields_updated.emit(self.custom_fields['fields'])
             self.dirty = True
 
-    def dirty_data_check(self):
-        proceed = True
+    def dirty_data_check(self) -> bool:
+        """Flush pending fields and ask whether unsaved project data can be left."""
+        if self.flush_fields is not None:
+            self.flush_fields()
+        proceed: bool = True
         if self.dirty:
             msg_box = QtWidgets.QMessageBox(self.parent())
             msg_box.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
@@ -268,7 +276,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             msg_box.setDefaultButton(QtWidgets.QMessageBox.StandardButton.Save)
             response = msg_box.exec()
             if response == QtWidgets.QMessageBox.StandardButton.Save:
-                proceed = self.save()
+                proceed = bool(self.save())
             elif response == QtWidgets.QMessageBox.StandardButton.Cancel:
                 proceed = False
         return proceed
@@ -632,10 +640,22 @@ class Canvas(QtWidgets.QGraphicsScene):
             and 0 <= selected_index < len(self.external_annotations)
             and self.external_annotations[selected_index].shape_type is shape_type
         ):
+            self.selected_annotation_indices = set()
             self.selected_external_annotation_index = None
-        self._rerender_external_annotations(
-            refresh_mask=False, refresh_points=False
-        )
+        if not visible:
+            self.selected_annotation_indices = {
+                index
+                for index in self.selected_annotation_indices
+                if self.external_annotations[index].shape_type is not shape_type
+            }
+        if (
+            self.selected_external_annotation_index is None
+            and len(self.selected_annotation_indices) == 1
+        ):
+            self.selected_external_annotation_index = next(
+                iter(self.selected_annotation_indices)
+            )
+        self._rerender_external_annotations(refresh_mask=False, refresh_points=False)
 
     def _clear_count_region_mask(self) -> None:
         """Remove the current outside-region mask from the scene."""
@@ -711,6 +731,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self._clear_count_region_mask()
         self.external_annotations = []
         self.external_annotation_document = None
+        self.selected_annotation_indices = set()
         self.selected_external_annotation_index = None
         try:
             document: LabelMeDocument | None = load_labelme_document(file_name)
@@ -776,7 +797,11 @@ class Canvas(QtWidgets.QGraphicsScene):
         annotation_color: QtGui.QColor = QtGui.QColor(style.color)
         annotation_pen: QtGui.QPen = QtGui.QPen(annotation_color, style.width)
         annotation_pen.setCosmetic(True)
-        if annotation_index == self.selected_external_annotation_index:
+        if (
+            annotation_index == self.selected_external_annotation_index
+            or annotation_index in self.selected_annotation_indices
+        ):
+            annotation_pen.setColor(QtGui.QColor("#ffcc00"))
             annotation_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
             annotation_pen.setWidthF(max(style.width + 1.5, 2.0))
 
@@ -894,7 +919,8 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def clear_external_annotation_selection(self) -> None:
         """Clear the selected native annotation and its vertex handles."""
-        had_selection: bool = self.selected_external_annotation_index is not None
+        had_selection: bool = self.selected_external_annotation_index is not None or bool(self.selected_annotation_indices)
+        self.selected_annotation_indices = set()
         self.selected_external_annotation_index = None
         self._clear_external_annotation_handles()
         if had_selection:
@@ -912,6 +938,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         if annotation_index < 0 or annotation_index >= len(self.external_annotations):
             self.clear_external_annotation_selection()
             return
+        self.selected_annotation_indices = {annotation_index}
         self.selected_external_annotation_index = annotation_index
         self._rerender_external_annotations(
             refresh_mask=False, refresh_points=False
@@ -940,6 +967,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         if vertex_index < 0 or vertex_index >= len(annotation.points):
             return
         annotation.points[vertex_index] = (point.x(), point.y())
+        self.selected_annotation_indices = {annotation_index}
         self.selected_external_annotation_index = annotation_index
         refresh_mask: bool = (
             annotation.shape_type is AnnotationShape.POLYGON
@@ -970,6 +998,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         annotation.points = [
             (x + delta.x(), y + delta.y()) for x, y in annotation.points
         ]
+        self.selected_annotation_indices = {annotation_index}
         self.selected_external_annotation_index = annotation_index
         refresh_mask: bool = (
             annotation.shape_type is AnnotationShape.POLYGON
@@ -1035,6 +1064,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         segment_index, projected_point = nearest
         insert_index: int = segment_index + 1
         annotation.points.insert(insert_index, projected_point)
+        self.selected_annotation_indices = {annotation_index}
         self.selected_external_annotation_index = annotation_index
         return self._persist_external_annotation_edit(annotation_index)
 
@@ -1070,6 +1100,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         annotation.points.pop(vertex_index)
+        self.selected_annotation_indices = {annotation_index}
         self.selected_external_annotation_index = annotation_index
         return self._persist_external_annotation_edit(annotation_index)
 
@@ -1484,6 +1515,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             return True
         for annotation_index, annotation in enumerate(self.external_annotations):
             if annotation.source_shape_index == selection_source_index:
+                self.selected_annotation_indices = {annotation_index}
                 self.selected_external_annotation_index = annotation_index
                 self._rerender_external_annotations(
                     refresh_mask=False, refresh_points=False
@@ -1507,6 +1539,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         annotation: Annotation
         for annotation_index, annotation in enumerate(self.external_annotations):
             if annotation.source_shape_index == source_shape_index:
+                self.selected_annotation_indices = {annotation_index}
                 self.selected_external_annotation_index = annotation_index
                 self._rerender_external_annotations(
                     refresh_mask=False, refresh_points=False
@@ -1814,6 +1847,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self._clear_external_annotation_graphics()
         self.external_annotations = []
         self.external_annotation_document = None
+        self.selected_annotation_indices = set()
         self.selected_external_annotation_index = None
 
     def release_image(self) -> None:
@@ -1836,6 +1870,12 @@ class Canvas(QtWidgets.QGraphicsScene):
             in_file_name: Source image path or Qt URL.
             redraw: Whether to reuse the currently decoded image data.
         """
+        if (
+            not redraw
+            and self.image_change_allowed is not None
+            and not self.image_change_allowed()
+        ):
+            return
         Image.MAX_IMAGE_PIXELS = 1000000000
         file_name = in_file_name
         if isinstance(file_name, QtCore.QUrl):
@@ -1866,7 +1906,10 @@ class Canvas(QtWidgets.QGraphicsScene):
                 channels = self.image_cache["channels"]
                 array = self.image_cache["data"]
                 if not redraw:
-                    self.generate_lookup_table(0, 0)
+                    brightness: int
+                    contrast: int
+                    brightness, contrast = self.enhancements.get(file_name, (0, 0))
+                    self.generate_lookup_table(brightness, contrast)
                 if array.shape[0] > 10000 or array.shape[1] > 10000:
                     self.image_loading.emit(True, redraw)
                     # Make smaller tiles to save memory
@@ -1911,9 +1954,10 @@ class Canvas(QtWidgets.QGraphicsScene):
                     self.image_loading.emit(False, redraw)
                     if channels == 1:
                         qt_image = QtGui.QImage(
-                            array.data,
+                            self.LUT[array].tobytes(),
                             array.shape[1],
                             array.shape[0],
+                            array.shape[1],
                             QtGui.QImage.Format.Format_Grayscale8,
                         )
                     else:
@@ -2006,7 +2050,14 @@ class Canvas(QtWidgets.QGraphicsScene):
         # Force rescan of working folder for new images
         self.load([QtCore.QUrl('file:{}'.format(self.directory))])
 
-    def package_points(self):
+    def package_points(self) -> tuple[dict[str, Any], int]:
+        """Package all project data after committing pending editor text.
+
+        Returns:
+            The serializable point-file document and total dot count.
+        """
+        if self.flush_fields is not None:
+            self.flush_fields()
         count = 0
         package = {'classes': [], 'points': {}, 'colors': {}, 'metadata': {'survey_id': self.survey_id, 'coordinates': self.coordinates}, 'custom_fields': self.custom_fields, 'ui': self.ui}
         package['classes'] = self.classes
@@ -2044,6 +2095,14 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         event: HistoryEvent = self.redo_queue.pop()
+        if event[0] == "selection_edit":
+            from .selection_editor import apply_selection_state
+
+            if apply_selection_state(self, event, 3):
+                self.undo_queue.append(event)
+                return True
+            self.redo_queue.append(event)
+            return False
         if event[0] == "move_points":
             moves: list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]] = cast(
                 list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]], event[2]
@@ -2169,6 +2228,8 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def reset(self) -> None:
         """Reset project, image, annotation, and history state."""
+        if self.flush_fields is not None:
+            self.flush_fields()
         self.dirty = False
         self.points = {}
         self.colors = {}
@@ -2184,6 +2245,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotation_document = None
         self.external_annotation_items = []
         self.external_annotation_handle_items = []
+        self.selected_annotation_indices = set()
         self.selected_external_annotation_index = None
         self.count_region_mask_item = None
 
@@ -2242,15 +2304,33 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.custom_fields['data'][field][self.current_image_name] = ''
             self.custom_fields['data'][field][self.current_image_name] = data
 
-    def save_points(self, file_name):
+    def save_points(self, file_name: str) -> bool:
+        """Atomically save project points and report the actual write result.
+
+        Args:
+            file_name: Destination point-file path.
+
+        Returns:
+            Whether the complete point file was committed successfully.
+        """
         try:
-            output, _ = self.package_points()
-            file = open(file_name, 'w')
-            json.dump(output, file, indent=2)
-            file.close()
+            output: dict[str, Any]
+            count: int
+            output, count = self.package_points()
+            payload: bytes = json.dumps(output, indent=2).encode("utf-8")
+            destination: QtCore.QSaveFile = QtCore.QSaveFile(file_name)
+            if not destination.open(QtCore.QIODevice.OpenModeFlag.WriteOnly):
+                raise OSError(destination.errorString())
+            if destination.write(payload) != len(payload):
+                destination.cancelWriting()
+                raise OSError("Incomplete point-file write")
+            if not destination.commit():
+                raise OSError(destination.errorString())
             self.dirty = False
-        except OSError:
+        except (OSError, ValueError, TypeError):
+            self.save_finished.emit(file_name, False)
             return False
+        self.save_finished.emit(file_name, True)
         return True
 
     def select_points(self, rect: QtCore.QRectF) -> None:
@@ -2360,6 +2440,14 @@ class Canvas(QtWidgets.QGraphicsScene):
             return False
 
         event: HistoryEvent = self.undo_queue.pop()
+        if event[0] == "selection_edit":
+            from .selection_editor import apply_selection_state
+
+            if apply_selection_state(self, event, 2):
+                self.redo_queue.append(event)
+                return True
+            self.undo_queue.append(event)
+            return False
         if event[0] == "move_points":
             moves: list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]] = cast(
                 list[tuple[QtCore.QPointF, QtCore.QPointF, QtCore.QPointF]], event[2]
