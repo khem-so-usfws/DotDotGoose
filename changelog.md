@@ -3,6 +3,14 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.8.8
+
+- Remove the duplicate filename from the Current pane heading.
+- Show full image names in picker and dropdown tooltips.
+- Align pane header controls and clarify their tooltips.
+- Remove the bottom-right zoom buttons that only affected Current.
+- Use consistent Left panel / Right panel toolbar labels.
+
 ## 1.8.7
 
 - Add independent 90-degree left/right view rotation in both pane headers.

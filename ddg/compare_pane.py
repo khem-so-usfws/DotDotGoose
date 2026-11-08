@@ -46,6 +46,7 @@ class ComparePane(QtWidgets.QFrame):
         layout.setSpacing(2)
 
         header: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
+        header.setSpacing(4)
         self.label: QtWidgets.QLabel = QtWidgets.QLabel(self.tr("REFERENCE"), self)
         self.label.setStyleSheet("font-weight: bold;")
         header.addWidget(self.label)
@@ -72,7 +73,9 @@ class ComparePane(QtWidgets.QFrame):
         self.make_current_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
             self.tr("Make Current"), self
         )
-        self.fit_button: QtWidgets.QPushButton = QtWidgets.QPushButton(self.tr("Fit"), self)
+        self.fit_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
+            self.tr("Fit"), self
+        )
         self.actual_size_button: QtWidgets.QPushButton = QtWidgets.QPushButton(
             self.tr("1:1"), self
         )
@@ -90,6 +93,14 @@ class ComparePane(QtWidgets.QFrame):
         self.close_button.setToolTip(self.tr("Hide comparison pane"))
         self.close_button.setMaximumWidth(30)
 
+        self.previous_button.setToolTip(self.tr("Previous image in this pane"))
+        self.next_button.setToolTip(self.tr("Next image in this pane"))
+        self.make_current_button.setToolTip(self.tr("Use this image as Current"))
+        self.fit_button.setToolTip(self.tr("Fit the image to this pane"))
+        self.actual_size_button.setToolTip(self.tr("Show image at 1:1 scale"))
+
+        controls: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
+        controls.setSpacing(4)
         for button in (
             self.previous_button,
             self.next_button,
@@ -100,15 +111,25 @@ class ComparePane(QtWidgets.QFrame):
             self.rotate_right_button,
             self.close_button,
         ):
-            header.addWidget(button)
+            # Match control heights while allowing the image picker to shrink.
+            button.setFixedHeight(self.image_combo.sizeHint().height())
+            button.setAutoDefault(False)
+            button.setFixedWidth(
+                button.fontMetrics().horizontalAdvance(button.text()) + 20
+            )
+            if button is self.fit_button:
+                controls.addStretch(1)
+            controls.addWidget(button)
         layout.addLayout(header)
+        layout.addLayout(controls)
 
         self.graphics_view: CentralGraphicsView = (
             graphics_view if graphics_view is not None else CentralGraphicsView(self)
         )
         if graphics_view is not None:
             self.setObjectName("compareCurrentPane")
-            self.label.setText(self.tr("★ CURRENT"))
+            self.label.setText(self.tr("CURRENT"))
+            self.label.setToolTip(self.tr("Current image pane"))
             self.make_current_button.hide()
             self.close_button.hide()
         self.graphics_view.setMinimumSize(0, 0)
@@ -138,9 +159,14 @@ class ComparePane(QtWidgets.QFrame):
         blocker: QtCore.QSignalBlocker = QtCore.QSignalBlocker(self.image_combo)
         self.image_combo.clear()
         self.image_combo.addItems(image_names)
+        for index, name in enumerate(image_names):
+            self.image_combo.setItemData(
+                index, name, QtCore.Qt.ItemDataRole.ToolTipRole
+            )
         if selected and selected in image_names:
             self.image_combo.setCurrentText(selected)
         del blocker
+        self.image_combo.setToolTip(self.image_combo.currentText())
         enabled: bool = self.image_combo.count() > 0
         self.image_combo.setEnabled(enabled)
         self.previous_button.setEnabled(enabled)
@@ -164,6 +190,7 @@ class ComparePane(QtWidgets.QFrame):
         blocker: QtCore.QSignalBlocker = QtCore.QSignalBlocker(self.image_combo)
         self.image_combo.setCurrentIndex(index)
         del blocker
+        self.image_combo.setToolTip(self.image_combo.currentText())
 
     def previous_image(self) -> None:
         """Select the previous available reference image."""
@@ -195,5 +222,6 @@ class ComparePane(QtWidgets.QFrame):
         Args:
             image_name: Newly selected image basename.
         """
+        self.image_combo.setToolTip(image_name)
         if image_name:
             self.image_requested.emit(image_name)

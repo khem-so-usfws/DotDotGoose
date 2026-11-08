@@ -294,13 +294,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.pushButtonAddField.clicked.connect(self.add_field_dialog)
         self.pushButtonDeleteField.clicked.connect(self.delete_field_dialog)
         self.pushButtonFolder.clicked.connect(self.select_folder)
-        self.pushButtonZoomOut.clicked.connect(self.graphicsView.zoom_out)
-        self.pushButtonZoomIn.clicked.connect(self.graphicsView.zoom_in)
 
         # Fix icons since no QRC file integration
         self.pushButtonFolder.setIcon(QtGui.QIcon('icons:folder.svg'))
-        self.pushButtonZoomIn.setIcon(QtGui.QIcon('icons:zoom_in.svg'))
-        self.pushButtonZoomOut.setIcon(QtGui.QIcon('icons:zoom_out.svg'))
         self.pushButtonDeleteField.setIcon(QtGui.QIcon('icons:delete.svg'))
         self.pushButtonAddField.setIcon(QtGui.QIcon('icons:add.svg'))
 
@@ -687,9 +683,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             image_name: Newly loaded Current image basename.
         """
         del directory
-        self.current_compare_label.setText(
-            self.tr("★ CURRENT — {}").format(image_name)
-        )
+        self.current_compare_label.setText(self.tr("CURRENT"))
         self.refresh_compare_images()
         if not self._compare_enabled:
             return

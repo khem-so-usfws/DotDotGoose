@@ -61,7 +61,8 @@ def test_compare_toggle_loads_one_reference_image(qtbot: Any, tmp_path: Path) ->
     assert widget.compare_pane.isHidden() is False
     assert widget.reference_canvas.current_image_name == second.name
     assert widget.reference_graphics_view.count_point_placement_enabled is True
-    assert widget.current_compare_label.text().endswith(first.name)
+    assert widget.current_compare_label.text() == "CURRENT"
+    assert widget.current_pane.image_combo.toolTip() == first.name
 
 
 def test_compare_supports_horizontal_and_vertical_layouts(qtbot: Any) -> None:

@@ -24,7 +24,7 @@ upgrade. Changing layouts does not change either selected image.
 
 ## Current image
 
-The pane marked **★ CURRENT** has an image picker, Prev/Next, Fit, and 1:1
+The pane marked **CURRENT** has an image picker, Prev/Next, Fit, and 1:1
 controls in both single-image and comparison modes. Its picker uses the same
 Current image-loading workflow as the sidebar. Selecting the Reference image
 as Current retains the existing swap behavior.
@@ -94,3 +94,11 @@ Dots, grids, native annotations, and the navigator follow the image. Fit and 1:1
 retain the angle. Each newly opened image starts upright. Rotation is a viewing
 preference for the current session; saved dots and annotations use original
 source-image coordinates. Rotation does not modify the source image file.
+
+## Compact pane controls (1.8.8)
+
+Image names appear once, in each pane’s picker. Hover over the picker or a
+dropdown item to read the full filename. Fit, 1:1, and rotation remain local to
+each pane. Use the mouse wheel or Z/X+drag to zoom; the old bottom-right
+Current-only zoom buttons have been removed. The main toolbar provides
+consistent Left panel and Right panel toggles; checked means visible.
