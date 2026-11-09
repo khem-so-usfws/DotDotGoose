@@ -74,15 +74,22 @@ def test_working_directory_has_visible_space(window: MainWindow, qtbot: Any) -> 
     assert label.full_path == widget.canvas.directory
     assert label.toolTip() == widget.canvas.directory
     assert widget.horizontalLayout.stretch(widget.horizontalLayout.indexOf(label)) == 1
-    long_path: str = "C:/Users/observer/" + "long-project-name/" * 20 + "DotDotGoose"
+    available_width: int = label.contentsRect().width()
+    segment: str = "long-project-name/"
+    segment_width: int = label.fontMetrics().horizontalAdvance(segment)
+    # Force overflow regardless of the window width or platform font.
+    repetitions: int = available_width // segment_width + 2
+    long_path: str = f"C:/Users/observer/{segment * repetitions}DotDotGoose"
+    assert label.fontMetrics().horizontalAdvance(long_path) > available_width
     label.setText(long_path)
+    displayed_path: str = label.text()
     assert label.full_path == long_path
-    assert "…" in label.text()
     assert label.toolTip() == long_path
-    assert (
-        label.fontMetrics().horizontalAdvance(label.text())
-        <= label.contentsRect().width()
-    )
+    # Check middle elision without relying on Qt's choice of ellipsis glyph.
+    assert displayed_path != long_path
+    assert displayed_path.startswith("C:/")
+    assert displayed_path.endswith("DotDotGoose")
+    assert label.fontMetrics().horizontalAdvance(displayed_path) <= available_width
     label.setText(widget.canvas.directory)
     window.resize(900, 850)
     qtbot.wait(30)

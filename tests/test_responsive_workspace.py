@@ -183,7 +183,9 @@ def test_sidebar_resize_export_and_path(window: MainWindow, monkeypatch: Any) ->
     assert layout.splitter.sizes() != old
     assert not widget.labelWorkingDirectory.isHidden()
     assert not widget.pushButtonFolder.isHidden()
-    assert widget.labelWorkingDirectory.text() == widget.canvas.directory
+    # The visible path may be shortened to fit the available width.
+    assert widget.labelWorkingDirectory.text()
+    assert widget.labelWorkingDirectory.full_path == widget.canvas.directory
     assert widget.labelWorkingDirectory.toolTip() == widget.canvas.directory
     assert layout.class_indicator.parentWidget() is layout.groups[1]
     layout.copy_path()

@@ -75,7 +75,8 @@ def test_restored_folder_and_matching_menus(window: MainWindow) -> None:
     assert widget.pushButtonFolder.isVisible()
     assert widget.label_3.text() == "Working Directory:"
     assert widget.label_3.isVisible()
-    assert widget.labelWorkingDirectory.text() == widget.canvas.directory
+    assert widget.labelWorkingDirectory.text()
+    assert widget.labelWorkingDirectory.full_path == widget.canvas.directory
     recover: QtWidgets.QPushButton = widget.workspace_feedback.recover_button
     export: QtWidgets.QPushButton = widget.point_widget.pushButtonExport
     assert type(recover) is type(export)
