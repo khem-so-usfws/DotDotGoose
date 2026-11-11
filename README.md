@@ -1,237 +1,270 @@
 # DotDotGoose
 
 DotDotGoose is a free, open source tool for manually counting objects in images.
-This fork extends upstream DotDotGoose 1.7.1 with native image annotations,
-ArcGIS-inspired navigation, and a lightweight two-image Compare workflow while
-preserving the original point-counting model and source-image pixel coordinates.
+This fork extends upstream DotDotGoose 1.7.1 with native annotations, a two-image
+Compare workspace, and shared counting and editing tools.
 
-Current fork version: **1.8.0**.
+Current fork version **1.8.9**.
 
+Count points and annotations retain original-image pixel coordinates, making
+them suitable for review, analysis, and future computer-assisted counting.
 
-*Point data collected with DotDotGoose can provide valuable training and
-validation data for future computer-assisted counting workflows.*
+## Download and run on Windows
 
-## What is new in this fork
+Download the Windows x64 ZIP from this fork's
+[GitHub Releases](https://github.com/khem-so-usfws/DotDotGoose/releases).
+Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
+folder. Keep the bundled runtime files alongside the executable.
 
-### Native annotations
+The 1.8.9 package is named `DotDotGoose-1.8.9-windows-x64.zip`. Python and Conda
+are required only when running from source or building a release.
 
-DotDotGoose can now create and edit non-count annotations directly on source
-images without requiring LabelMe for routine boundary work:
+## Counting and comparison
 
-- **Landmark points** for visual reference;
-- **Cutlines** for separating portions of an image or colony;
-- **Count-region polygons** for marking the valid counting area;
-- vertex and whole-shape editing, insertion/deletion of vertices, locking,
-  visibility controls, properties, and configurable symbology;
-- chronological undo/redo integrated with normal DDG point edits;
-- LabelMe-compatible JSON sidecars using original-image pixel coordinates;
-- atomic JSON writes plus `.json.bak` backups of the previous sidecar version.
+Select a class in the left sidebar, choose **Count dots**, and click an image to
+add count points. The same selected class applies to Current and Reference, and
+counts update for edits made in either pane.
 
-Count regions can optionally dim areas outside the valid region, highlight or
-warn about points outside it, and provide QA navigation through outside points.
-They are validation aids in 1.8.0: standard DDG raw point totals and exports are
-not automatically filtered by count regions.
+Use the **Compare** toolbar button to show or hide Reference. Its dropdown
+selects **1×2 Side by Side** or **2×1 Stacked**. Each pane has an image picker,
+Previous/Next, Fit, 1:1, rotation, and Enhance controls. Secondary controls move
+into **More (⋯)** when space is limited.
 
-See [Native Annotations](docs/native_annotations.md) for the complete workflow.
+- Pan and zoom independently in each pane.
+- Use **Navigator** to show a read-only overview at the bottom right of each pane,
+  with a rectangle showing the visible image extent.
+- Use **Make Current** in Reference's More menu to swap the two displayed images.
+- Undo and redo follow edit order across both panes.
+- Hiding Reference releases its decoded image while remembering the image choice.
 
-### ArcGIS-inspired counting and navigation
+The workspace loads the displayed Current and Reference images rather than every
+image in the project. See the [Compare guide](docs/compare_pane.md) for details.
 
-The fork changes the primary image interaction so ordinary clicking stays
-focused on counting:
+### Navigation and keyboard controls
 
 | Input | Action |
 | --- | --- |
-| **Click** | Add a point in the selected class |
-| **Shift+drag** | Rubber-band select count points |
-| **C+drag** | Temporarily pan |
-| **Z+drag** | Rectangle zoom in |
-| **X+drag** | Rectangle zoom out |
-| **Mouse wheel** | Incremental zoom |
-| **Ctrl+Z / Ctrl+Y** | Undo / redo |
+| Click in Count dots | Add a count point in the selected class |
+| Shift+drag in Count dots | Select count points within a rectangle |
+| C+drag | Temporarily pan |
+| Z+drag | Rectangle zoom in |
+| X+drag | Rectangle zoom out |
+| Mouse wheel | Incremental zoom |
+| Ctrl+Z / Ctrl+Y | Undo / redo across both panes |
+| Enter or double-click while drawing | Finish a line or polygon |
+| Esc | Cancel an unfinished shape or clear selection, retaining the selected tool |
 
-C, Z, and X are temporary navigation overrides, including while an annotation
-tool is active. A small click/drag threshold helps prevent accidental point
-creation during mouse movement.
+C, Z, and X also work while drawing or editing annotations. Choose **Count dots**
+to return to counting after using another tool.
 
-### Lightweight Compare pane
+## Native annotations and Select/Edit
 
-Use **View > Compare Image** to display one additional full-resolution reference
-image without replacing normal DDG counting.
+Use **Landmark**, **Line**, or **Polygon** to mark reference points, cutlines, and
+count regions directly in either pane. The first click activates that pane and
+starts the shape. Drawing tools stay selected after a shape is completed.
+Finish an unfinished shape with Enter, or cancel it with Esc, before changing
+tools or images or starting a shape in the other pane.
 
-Key behavior:
+Choose **Select/Edit** to work with count dots and annotations together.
 
-- **1×2 Side by Side** is the default layout;
-- **2×1 Stacked** is also available;
-- both panels have matching image pickers, Previous/Next, Fit, and 1:1 controls;
-- Reference has an independent selector plus Previous/Next, Fit, 1:1,
-  **Make Current**, and hide controls;
-- pan and zoom are independent between panes;
-- count points can be added and selected in either pane using the shared class;
-- sidebar grid spacing, color, visibility and dot size, color, visibility update both panes;
-- landmarks, cutlines, and count regions can be drawn and edited in either pane;
-- after choosing a drawing tool, the first ordinary click in either pane both
-  selects that pane and starts the annotation—no separate activation click is
-  required;
-- **Make Current** swaps Current and Reference rather than duplicating an image;
-- undo/redo follows edit chronology across both panes rather than the last
-  active pane;
-- hiding Compare releases the decoded Reference image while remembering its
-  filename and layout for the next Compare session.
+| Input | Action |
+| --- | --- |
+| Click an item | Select it |
+| Shift+click | Add or remove an item from the selection |
+| Shift+drag | Add visible items fully enclosed by the selection rectangle |
+| Drag an already selected item | Move the selected group |
+| Drag a selected annotation's vertex handle | Move that vertex |
+| Delete / Backspace | Delete selected items |
+| Esc or click empty space | Clear the selection |
 
-Only Current and the one visible Reference image are decoded simultaneously, so
-projects can contain many large images without loading them all into memory.
-Compare does not create mosaics, resample images, or transform annotation
-coordinates.
+The first click selects an item. Use a subsequent drag to move it. Moves and
+deletions of mixed dot/annotation groups are single undoable actions. A selection
+containing a locked annotation must be unlocked or adjusted before moving or
+deleting it. An overlap menu helps choose between nearby items.
 
-See [Lightweight Compare Pane](docs/compare_pane.md) for details.
+The pane's selection menu offers **Move by pixel offset**, Delete, and Clear
+selection. A single selected annotation also supports properties and right-click
+vertex insertion/deletion. Annotation properties include labels, symbology, and
+locking.
 
-## Data compatibility
+Count-region polygons can dim the area outside a region, highlight outside
+points, and support QA review. Standard point totals and exports include all
+count points, including those outside a count region.
 
-The fork keeps the original DDG count data separate from native annotations:
+See [Native Annotations](docs/native_annotations.md) for geometry, sidecar, and
+count-region workflows.
 
-- DDG count points remain in the `.pnt` project and retain original-image pixel
-  coordinates.
-- Native annotations are stored in a LabelMe-compatible `.json` sidecar beside
-  each source image.
-- Source images are not modified or resampled.
-- Unsupported LabelMe shapes and unrelated metadata are preserved where
-  practical.
+## Image display and workspace
 
-This design keeps original-image point and annotation coordinates suitable for
-later QA, analysis, or machine-learning workflows.
+Use the rotation buttons in either pane to rotate its view in 90-degree steps.
+Dots, grids, annotations, and the navigator follow the view. **Enhance** provides
+independent brightness and contrast controls with Apply, Reset, and an original
+image preview.
 
-## Dependencies
+Zoom, pan, rotation, and enhancement settings are remembered per image within
+each pane for the current session. **Reset view** returns the image upright and
+fits it to the pane. Display adjustments preserve source-image pixel coordinates.
 
-DotDotGoose is developed with the following libraries:
+The main toolbar has three groups separated by pipe dividers.
 
-- PyQt6 (6.7.1)
-- Pillow (10.3.0)
-- NumPy (1.26.4)
+| Group | Controls |
+| --- | --- |
+| Panels | Left panel, Right panel, Compare |
+| Display | Dots, Grid, Navigator |
+| Tools | Landmark, Line, Polygon, Select/Edit, Count dots, Class |
 
-## Installation
+Tools share one active mode across both panes. The selected class appears beside
+Count dots, or beside the active-tool selector when the toolbar is compact.
+Toolbar groups collapse into menus as the window narrows.
 
-Clone this fork/repository, then create an environment and install its
-requirements. For example on Linux/macOS:
+Both sidebars start open and can be toggled or resized. The left sidebar starts
+at 425 pixels when space permits. The right sidebar initially receives one quarter
+of the space remaining after the left sidebar. Custom fields scroll vertically
+when needed to keep their editors usable.
+
+The right sidebar follows the most recently clicked pane. Its heading identifies
+Current or Reference. Coordinates and custom-field values belong to that image,
+while Survey ID and field definitions apply to the project. Pending field edits
+are committed to their original image before changing panes or saving.
+
+The **Working Directory** row below the images displays the image folder. Long
+paths shorten in the middle. Hover for the full path, or right-click to copy it.
+
+## Saving and recovery
+
+Count dots, custom-field values, and project metadata are saved in the `.pnt`
+project. Native annotations save immediately in LabelMe-compatible `.json`
+sidecars beside the source images, with `.json.bak` backups of the previous
+sidecar version. Keep the images and their sidecars together when moving a
+project. Source images retain their original pixels.
+
+The status bar reports unsaved point/field changes and save failures. A confirmed
+save displays **Saved** briefly, then the save indicator becomes blank when idle.
+Hover over the indicator for save and recovery details.
+
+Every two minutes while point/field changes are unsaved, DotDotGoose writes a
+separate recovery snapshot in the image folder and retains the preceding
+snapshot. Use **Recover > Open recovery snapshot** beside Load, Import, Save,
+and Reset to open one, then save the recovered project to a chosen destination.
+Recovery snapshots contain point/project data. Annotation geometry is stored in
+its image sidecars.
+
+See the [recovery documentation](docs/compare_pane.md#workspace-feedback-and-recovery-189)
+for snapshot filenames and behavior.
+
+## Run from source
+
+The application requirements are PyQt6 6.7.1, Pillow 10.3.0, and NumPy 1.26.4,
+pinned in `requirements.txt`.
+
+Clone the repository and enter its directory.
 
 ```bash
-python3 -m venv ddg-env
-source ddg-env/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+git clone https://github.com/khem-so-usfws/DotDotGoose.git
+cd DotDotGoose
 ```
 
-On Windows, a Conda environment also works well:
+On Windows, use Anaconda Prompt or Miniconda Prompt to create the development
+environment.
 
 ```bat
 conda create -n ddg-dev python=3.12
 conda activate ddg-dev
 python -m pip install -r requirements.txt
-```
-
-## Launching DotDotGoose
-
-From the repository root:
-
-```bash
 python main.py
 ```
 
-## Documentation
+For later sessions, activate `ddg-dev`, enter the repository directory, and run
+`python main.py`.
 
-- [Native Annotations](docs/native_annotations.md)
-- [Lightweight Compare Pane](docs/compare_pane.md)
-- [Changelog](changelog.md)
+On Linux or macOS, use a Python 3.12 virtual environment.
 
-## Windows executable releases
+```bash
+python3.12 -m venv ddg-env
+source ddg-env/bin/activate
+python -m pip install -r requirements.txt
+python main.py
+```
 
-Windows users do not need Python or Conda when using a packaged release. Download
-the versioned Windows ZIP from this repository's GitHub **Releases** page, extract
-the complete folder, and run `DotDotGoose.exe`. Do not move the executable out of
-its extracted folder because the bundled runtime files beside it are required.
+## Build a Windows executable
 
-A new unsigned build may trigger Windows SmartScreen or organization-specific
-antivirus review. That warning is separate from Python installation and can be
-reduced in future releases by code-signing the Windows executable.
-
-### Building the Windows release
-
-Windows release builds are defined by the checked-in `DotDotGoose.spec`
-PyInstaller specification and `build_windows.bat` wrapper. Build the Windows
-package on a Windows x64 machine; PyInstaller does not cross-compile a Windows
-application from Linux or macOS.
-
-From an activated development environment in the repository root:
+Run the build on Windows x64, from the repository root in the activated
+development environment.
 
 ```bat
 python -m pip install -r requirements-build.txt
 build_windows.bat
 ```
 
-By default the script runs the test suite first, builds a windowed PyInstaller
-**one-folder** application, copies the license and user documentation into the
-release folder, and creates:
+The script runs the tests, builds the application using `DotDotGoose.spec`, adds
+the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.8.0-windows-x64\
-dist\DotDotGoose-1.8.0-windows-x64.zip
+dist\DotDotGoose-1.8.9-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.8.9-windows-x64.zip
 ```
 
-The version in those names is read from `ddg.__version__`, so later releases do
-not require editing the batch file. `requirements-build.txt` pins the tested
-release-tool versions separately from the application runtime requirements. The
-spec explicitly bundles the Qt Designer `.ui` files plus the `icons` and `i18n`
-resources that DDG loads at runtime.
+The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
+directories are ignored by Git. The complete application folder is required
+for distribution.
 
-Use the optional switch only if the exact same source revision has already been
-tested:
+### Recover from a staging error
+
+If PyInstaller reports **Build complete** followed by **Access is denied** and
+**Could not stage the versioned release directory**, first confirm that
+`dist\DotDotGoose\DotDotGoose.exe` exists. Close any running copy of the built
+application. The following commands copy that existing build into a new temp
+folder, add the documentation, and create the ZIP.
+
+Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-build_windows.bat --skip-tests
+set "DDG_STAGE=%TEMP%\ddg-1.8.9-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.8.9-windows-x64"
+
+powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
+
+explorer "%DDG_STAGE%"
 ```
 
-Before publishing a release, extract the generated ZIP and test it on a Windows
-machine that does **not** have Python or Conda installed. At minimum verify image
-loading, point counting, save/reopen, native annotations, Count Region QA, both
-Compare layouts, Reference annotations, cross-pane undo/redo, export, and normal
-application shutdown/restart.
+Use the ZIP in that temp folder as the release asset.
 
-Generated `build/` and `dist/` directories are ignored by Git and should not be
-committed.
+### Publish a release
 
-### Publishing a GitHub Release
+Build from the exact commit being released. Extract the ZIP and test image
+loading, counting in both panes, selection/movement/deletion, save and reopen,
+annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
+Windows machine without Python or Conda when testing the packaged application.
 
-Build the executable from the exact commit being released. After the final tests
-and merge to `main`, create and push an annotated version tag:
+For each new release, commit the final source, push the release branch, and
+create an annotated version tag. The example below uses `main` and `v1.8.9`.
+Use a new version for a release following an already published tag.
 
 ```bat
-git checkout main
-git pull origin main
-pytest -v
-git tag -a v1.8.0 -m "DotDotGoose 1.8.0"
 git push origin main
-git push origin v1.8.0
+git tag -a v1.8.9 -m "DotDotGoose 1.8.9"
+git push origin refs/tags/v1.8.9
 ```
 
-Then open the repository on GitHub and create a new **Release** using the
-`v1.8.0` tag. Use a title such as `DotDotGoose 1.8.0`, summarize the major changes
-from `changelog.md`, and attach:
+Create a release from that tag on the
+[GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
+add release notes, and attach `DotDotGoose-1.8.9-windows-x64.zip`. The attached
+Windows ZIP contains the executable and runtime files. GitHub's automatic
+source archives contain the source code.
 
-```text
-DotDotGoose-1.8.0-windows-x64.zip
-```
+## Documentation
 
-Mark the release as **Latest** when it is the current stable version. GitHub also
-creates source-code archives automatically; Windows users who do not install
-Python should use the attached `windows-x64.zip` asset instead.
+- [Native Annotations](docs/native_annotations.md)
+- [Compare, workspace controls, and recovery](docs/compare_pane.md)
+- [Changelog](changelog.md)
 
 ## Upstream project
 
 This fork is based on the upstream
-[DotDotGoose project](https://github.com/persts/DotDotGoose). Upstream-provided
-executables are available from the
-[AMNH DotDotGoose page](https://biodiversityinformatics.amnh.org/open_source/dotdotgoose/),
-but those executables may not include the fork-specific 1.8.0 features described
-above.
+[DotDotGoose project](https://github.com/persts/DotDotGoose). Upstream executables
+are available from the
+[AMNH DotDotGoose page](https://biodiversityinformatics.amnh.org/open_source/dotdotgoose/).
+Use this fork's releases for the features described here.
 
 ## Contributors
 
@@ -240,42 +273,3 @@ above.
 - Julie Young — https://github.com/julieyoung6
 - Ștefan Istrate — https://github.com/stefanistrate
 - Khem So — https://github.com/khem-so-usfws
-
-
-### Image rotation
-
-Use the ↶ and ↷ buttons in either pane header to rotate that view by 90 degrees.
-Dots, grids, native annotations, and the navigator follow the image. Fit and 1:1
-retain the angle. Each newly opened image starts upright. Rotation is a viewing
-preference for the current session; saved dots and annotations use original
-source-image coordinates. Rotation does not modify the source image file.
-
-### Workspace improvements (1.8.9)
-
-Both panes have independent Enhance controls, active tool/class and selection
-feedback, remembered session views, and Reset view. Confirmed save status and
-separate recovery snapshots help protect unsaved point/field edits. See
-[the compare-pane guide](docs/compare_pane.md#workspace-feedback-and-recovery-189).
-
-The 1.8.9 UI revision groups shared tools and display toggles in the main toolbar.
-Pane headers use two rows; secondary actions are in More (⋯). Recover is beside
-the existing project buttons, with save/recovery feedback in the status bar.
-Tools stay selected across both panes; Esc cancels a draft or clears selection,
-and Count dots explicitly returns to counting.
-
-The next 1.8.9 follow-up adds a Compare visibility/layout split button beside the
-panel toggles. Select/Edit now selects, drags, and deletes dots and annotations
-using the same gestures, including mixed groups and single-step undo/redo.
-
-The responsive-layout follow-up keeps 1.8.9 and connects the right sidebar to the
-active image, safely commits pending field text, adds resizable sidebars and
-adaptive overflow, and compacts Export controls. The folder button and Working Directory path row
-appear below the images. The left sidebar starts at 425 px and remains resizable.
-The selected class appears beside Count dots (or the compact tool selector), while
-save state remains in the status bar. Recover and Export share left-aligned
-icon/text menu-button styling.
-
-The toolbar-order follow-up keeps version 1.8.9: Panels, Display, and Tools are
-separated by pipes; Tools uses Landmark/Line/Polygon, Select/Edit, then Count dots
-and Class. The Working Directory path receives visible row space, the right
-sidebar starts with its legacy width proportion, and idle save status is blank.
