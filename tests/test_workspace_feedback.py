@@ -44,12 +44,13 @@ def workspace(qtbot: Any, tmp_path: Path) -> CentralWidget:
 
 
 def test_enhancement_is_independent_and_preserves_edits(
-    workspace: CentralWidget,
+    workspace: CentralWidget, qtbot: Any
 ) -> None:
     """Reference enhancement keeps image pixels, selection, rotation, and zoom aligned.
 
     Args:
         workspace: Visible test workspace.
+        qtbot: Qt interaction fixture.
     """
     widget: CentralWidget = workspace
     canvas: Any = widget.reference_canvas
@@ -64,6 +65,22 @@ def test_enhancement_is_independent_and_preserves_edits(
     dialog: EnhancementDialog = EnhancementDialog(
         widget.workspace_feedback, widget.compare_pane, canvas
     )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.brightness.minimum() == dialog.contrast.minimum() == -100
+    dialog.brightness.setFocus()
+    dialog.brightness.selectAll()
+    qtbot.keyClicks(dialog.brightness, "-25")
+    qtbot.keyClick(dialog.brightness, QtCore.Qt.Key.Key_Return)
+    assert canvas.LUT[60] == 35
+    assert dialog.isVisible()
+    dialog.contrast.setFocus()
+    dialog.contrast.selectAll()
+    qtbot.keyClicks(dialog.contrast, "-50")
+    qtbot.keyClick(dialog.contrast, QtCore.Qt.Key.Key_Enter)
+    assert canvas.enhancements[dialog.image_path] == (-25, -50)
+    assert canvas.LUT[60] != 35
+    dialog.contrast.setValue(0)
     dialog.brightness.setValue(40)
     dialog.apply()
     assert canvas.LUT[60] == 100

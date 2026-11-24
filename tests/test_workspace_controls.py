@@ -190,6 +190,52 @@ def test_layout_and_shared_display(window: MainWindow) -> None:
     assert window.workspace_controls.display_actions["Dots"].isChecked()
 
 
+def test_visibility_controls(window: MainWindow, qtbot: Any) -> None:
+    """Toolbar visibility follows the two panes and preserves geometry preferences.
+
+    Args:
+        window: Visible main window.
+        qtbot: Qt interaction fixture.
+    """
+    widget: Any = window.centralWidget()
+    controls: Any = window.workspace_controls
+    window.resize(1900, 900)
+    qtbot.wait(30)
+    buttons: list[QtWidgets.QToolButton] = widget.workspace_layout.groups[0].buttons
+    assert [button.text() for button in buttons] == [
+        "Left sidebar",
+        "Right sidebar",
+        "Compare",
+    ]
+    areas: list[QtWidgets.QWidget] = [
+        widget.framePointWidget,
+        widget.frameCustomField,
+        widget.compare_pane,
+    ]
+    for button, area in zip(buttons, areas):
+        assert button.isChecked() and area.isVisible()
+        button.click()
+        assert not button.isChecked() and not area.isVisible()
+        button.click()
+        assert button.isChecked() and area.isVisible()
+
+    for _pane, canvas in widget.workspace_feedback.panes:
+        canvas.add_landmark_annotation(QtCore.QPointF(400, 300))
+        canvas.select_external_annotation(0)
+        canvas.add_point(QtCore.QPointF(600, 300))
+        assert canvas.external_annotation_items
+    show: QtGui.QAction = controls.display_actions["Annotations"]
+    show.trigger()
+    for _pane, canvas in widget.workspace_feedback.panes:
+        assert len(canvas.external_annotations) == 1
+        assert not canvas.external_annotation_items
+        assert not canvas.selected_annotation_indices
+        assert canvas.show_points
+    show.trigger()
+    for _pane, canvas in widget.workspace_feedback.panes:
+        assert canvas.external_annotation_items
+
+
 def test_count_escape_and_click_alignment(window: MainWindow, qtbot: Any) -> None:
     """Changing active panes does not shift the source coordinate under a click.
 

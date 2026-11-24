@@ -4,7 +4,7 @@ DotDotGoose is a free, open source tool for manually counting objects in images.
 This fork extends upstream DotDotGoose 1.7.1 with native annotations, a two-image
 Compare workspace, and shared counting and editing tools.
 
-Current fork version **1.8.9**.
+Current fork version **1.8.9.1**.
 
 Count points and annotations retain original-image pixel coordinates, making
 them suitable for review, analysis, and future computer-assisted counting.
@@ -16,7 +16,7 @@ Download the Windows x64 ZIP from this fork's
 Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
 folder. Keep the bundled runtime files alongside the executable.
 
-The 1.8.9 package is named `DotDotGoose-1.8.9-windows-x64.zip`. Python and Conda
+The 1.8.9.1 package is named `DotDotGoose-1.8.9.1-windows-x64.zip`. Python and Conda
 are required only when running from source or building a release.
 
 ## Counting and comparison
@@ -74,6 +74,7 @@ Choose **Select/Edit** to work with count dots and annotations together.
 | Shift+drag | Add visible items fully enclosed by the selection rectangle |
 | Drag an already selected item | Move the selected group |
 | Drag a selected annotation's vertex handle | Move that vertex |
+| Change class… in the selection or right-click menu | Reclassify the selected dots |
 | Delete / Backspace | Delete selected items |
 | Esc or click empty space | Clear the selection |
 
@@ -87,6 +88,10 @@ selection. A single selected annotation also supports properties and right-click
 vertex insertion/deletion. Annotation properties include labels, symbology, and
 locking.
 
+In either pane, **Change class…** works in Count dots and Select/Edit. Choose an
+existing class and click **Apply**. Counts and dot colors update together, and
+the dots stay selected. The entire change is undoable in one step.
+
 Count-region polygons can dim the area outside a region, highlight outside
 points, and support QA review. Standard point totals and exports include all
 count points, including those outside a count region.
@@ -99,7 +104,8 @@ count-region workflows.
 Use the rotation buttons in either pane to rotate its view in 90-degree steps.
 Dots, grids, annotations, and the navigator follow the view. **Enhance** provides
 independent brightness and contrast controls with Apply, Reset, and an original
-image preview.
+image preview. Both values start at 0 and can be lowered to −100. Press Enter
+after typing a value to apply both settings.
 
 Zoom, pan, rotation, and enhancement settings are remembered per image within
 each pane for the current session. **Reset view** returns the image upright and
@@ -109,13 +115,17 @@ The main toolbar has three groups separated by pipe dividers.
 
 | Group | Controls |
 | --- | --- |
-| Panels | Left panel, Right panel, Compare |
-| Display | Dots, Grid, Navigator |
+| Panels | Left sidebar, Right sidebar, Compare |
+| Display | Dots, Grid, Navigator, Annotations |
 | Tools | Landmark, Line, Polygon, Select/Edit, Count dots, Class |
 
 Tools share one active mode across both panes. The selected class appears beside
 Count dots, or beside the active-tool selector when the toolbar is compact.
 Toolbar groups collapse into menus as the window narrows.
+
+The sidebar and Compare buttons stay pressed while their areas are visible.
+Use **Annotations** to hide or show annotations and their count-region overlays
+in both panes. Per-type visibility settings in the Annotations menu are retained.
 
 Both sidebars start open and can be toggled or resized. The left sidebar starts
 at 425 pixels when space permits. The right sidebar initially receives one quarter
@@ -200,8 +210,8 @@ The script runs the tests, builds the application using `DotDotGoose.spec`, adds
 the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.8.9-windows-x64\DotDotGoose.exe
-dist\DotDotGoose-1.8.9-windows-x64.zip
+dist\DotDotGoose-1.8.9.1-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.8.9.1-windows-x64.zip
 ```
 
 The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
@@ -219,8 +229,8 @@ folder, add the documentation, and create the ZIP.
 Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-set "DDG_STAGE=%TEMP%\ddg-1.8.9-release-%RANDOM%"
-set "DDG_PACKAGE=DotDotGoose-1.8.9-windows-x64"
+set "DDG_STAGE=%TEMP%\ddg-1.8.9.1-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.8.9.1-windows-x64"
 
 powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
 
@@ -237,18 +247,18 @@ annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
 Windows machine without Python or Conda when testing the packaged application.
 
 For each new release, commit the final source, push the release branch, and
-create an annotated version tag. The example below uses `main` and `v1.8.9`.
+create an annotated version tag. The example below uses `main` and `v1.8.9.1`.
 Use a new version for a release following an already published tag.
 
 ```bat
 git push origin main
-git tag -a v1.8.9 -m "DotDotGoose 1.8.9"
-git push origin refs/tags/v1.8.9
+git tag -a v1.8.9.1 -m "DotDotGoose 1.8.9.1"
+git push origin refs/tags/v1.8.9.1
 ```
 
 Create a release from that tag on the
 [GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
-add release notes, and attach `DotDotGoose-1.8.9-windows-x64.zip`. The attached
+add release notes, and attach `DotDotGoose-1.8.9.1-windows-x64.zip`. The attached
 Windows ZIP contains the executable and runtime files. GitHub's automatic
 source archives contain the source code.
 

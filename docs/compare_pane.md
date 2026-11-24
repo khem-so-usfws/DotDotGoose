@@ -108,9 +108,11 @@ consistent Left panel and Right panel toggles; checked means visible.
 ## Workspace feedback and recovery (1.8.9)
 
 Each pane has an **Enhance** button for brightness and contrast. Set values and
-choose **Apply**, **Reset**, or **Show original** to compare against the applied
-adjustments. Close restores the enhanced display. Finish or cancel an unfinished
-shape before enhancing. Adjustments affect display pixels only. Source images
+press Enter or choose **Apply** to update the display. Both controls start at 0
+and allow values down to −100. Use **Reset** to restore the defaults or
+**Show original** to preview unadjusted pixels. Close restores the enhanced
+display. Finish or cancel an unfinished shape before enhancing. Adjustments
+affect display pixels only. Source images
 and annotation coordinates are unchanged. Native annotation selection may clear
 on a scene redraw; count-dot selections are preserved.
 
@@ -187,6 +189,10 @@ or deselect it first. Annotation sidecars are written before count points change
 so a failed sidecar write leaves the entire group unchanged. Dots still require
 Save; annotations continue to save immediately. No source image pixels change.
 
+In either Count dots or Select/Edit, select dots and choose **Change class…**
+from the pane's selection menu or right-click menu. Choose an existing class and
+apply it to the selected dots in one undoable edit.
+
 ## Responsive layout and active-image data (1.8.9 follow-up)
 
 The right sidebar follows the pane most recently clicked, including explicit
@@ -230,12 +236,16 @@ Save/recovery state remains in the bottom status bar.
 
 ## Toolbar order and quiet status (1.8.9 follow-up)
 
-The toolbar is arranged as Panels (Left panel, Right panel, Compare), then Display
-(Dots, Grid, Navigator), then Tools (Landmark, Line, Polygon, Select/Edit, Count
-dots, Class). Literal pipe dividers separate the three groups. Small gaps separate
+The toolbar is arranged as Panels (Left sidebar, Right sidebar, Compare), then
+Display (Dots, Grid, Navigator, Annotations), then Tools (Landmark, Line, Polygon,
+Select/Edit, Count dots, Class). Pipe dividers separate the groups. Small gaps separate
 drawing tools, Select/Edit, and counting within Tools; all five tools still belong
 to one mutually exclusive group. Compact menus preserve this order and keep the
 active tool/class visible.
+
+The sidebar and Compare buttons stay pressed while their areas are visible.
+The Annotations button hides or shows annotation graphics and count-region
+overlays in both panes, using the existing per-type preferences when shown.
 
 The Working Directory row gives the path remaining horizontal space. Long paths
 abbreviate in the middle instead of forcing the window wider. Hover to see the

@@ -3,6 +3,16 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.8.9.1
+
+- Toggle annotation visibility in both panes from the Display toolbar.
+- Rename Left panel and Right panel to Left sidebar and Right sidebar. These
+  buttons and Compare stay pressed while their areas are visible.
+- Set brightness and contrast as low as −100. Press Enter in Enhance to apply
+  the entered values.
+- Use Change class from a pane's selection or right-click menu to reclassify
+  selected dots as one undoable edit.
+
 ## 1.8.9
 
 ### Toolbar order, folder path, and quiet status (same version)

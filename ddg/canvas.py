@@ -98,6 +98,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         }
 
         self.enhancements: dict[str, tuple[int, int]] = {}
+        self.show_annotations: bool = True
         self.survey_id: str = ""
 
         self.directory: str = ""
@@ -617,9 +618,21 @@ class Canvas(QtWidgets.QGraphicsScene):
             shape_type: Geometry type to query.
 
         Returns:
-            Persisted visibility state.
+            Effective visibility after applying both display settings.
         """
-        return annotation_visibility_enabled(shape_type)
+        return self.show_annotations and annotation_visibility_enabled(shape_type)
+
+    def set_annotations_visible(self, visible: bool) -> None:
+        """Show or hide annotation graphics while keeping per-type preferences.
+
+        Args:
+            visible: Whether annotations and their QA overlays should be shown.
+        """
+        self.show_annotations = visible
+        if not visible:
+            self.selected_annotation_indices.clear()
+            self.selected_external_annotation_index = None
+        self._rerender_external_annotations()
 
     def set_annotation_type_visible(
         self,
@@ -671,7 +684,7 @@ class Canvas(QtWidgets.QGraphicsScene):
     def refresh_count_region_mask(self) -> None:
         """Render a translucent mask outside the union of count regions."""
         self._clear_count_region_mask()
-        if not self.dim_outside_count_region_enabled():
+        if not self.show_annotations or not self.dim_outside_count_region_enabled():
             return
 
         regions: list[Annotation] = count_region_polygons(
@@ -1653,7 +1666,10 @@ class Canvas(QtWidgets.QGraphicsScene):
         if not self.show_points:
             return
         if self.current_image_name in self.points:
-            highlight_outside: bool = self.highlight_outside_count_region_points_enabled()
+            highlight_outside: bool = (
+                self.show_annotations
+                and self.highlight_outside_count_region_points_enabled()
+            )
             regions: list[Annotation] = (
                 count_region_polygons(self.external_annotations)
                 if highlight_outside
@@ -1745,21 +1761,22 @@ class Canvas(QtWidgets.QGraphicsScene):
             image.save(file_name)
             painter.end()
 
-    def generate_lookup_table(self, brightness, contrast):
-        LUT = [i for i in range(0, 256)]
-        # Brighten image
-        base_min = brightness
-        base_max = 255
-        for i in range(0, 256):
-            LUT[i] = min(255, LUT[i] + brightness)
+    def generate_lookup_table(self, brightness: int, contrast: int) -> None:
+        """Map source intensities to the adjusted display range.
 
-        # Apply contrast
-        new_min = base_min - contrast
-        new_max = 255 + contrast
-        for i in range(0, 256):
-            value = ((LUT[i] - base_min) / (base_max - base_min)) * (new_max - new_min) + new_min
-            LUT[i] = min(255, max(0, value))
-        self.LUT = np.array(LUT, dtype=np.uint8)
+        Args:
+            brightness: Signed offset from the original brightness.
+            contrast: Signed change to the intensity range.
+        """
+        brightened: np.ndarray = np.minimum(255, np.arange(256) + brightness)
+        new_min: int = brightness - contrast
+        new_max: int = 255 + contrast
+        # Clip after contrast so negative brightness cannot wrap on conversion.
+        adjusted: np.ndarray = (
+            (brightened - brightness) / (255 - brightness) * (new_max - new_min)
+            + new_min
+        )
+        self.LUT = np.clip(adjusted, 0, 255).astype(np.uint8)
 
     def get_custom_field_data(self):
         data = {}
@@ -1939,7 +1956,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                             )
                             * 255
                         )
-                        tile[:, 0:tail] = array[:, max_stride : array.shape[1]]
+                        tile[:, :tail] = self.LUT[array[:, max_stride:]]
                         qt_image = QtGui.QImage(
                             tile.data,
                             tile.shape[1],
@@ -1964,6 +1981,7 @@ class Canvas(QtWidgets.QGraphicsScene):
                         array = self.LUT[array]
                         bpl = int(array.nbytes / array.shape[0])
                         if array.shape[2] == 4:
+                            array[:, :, 3] = self.image_cache["data"][:, :, 3]
                             qt_image = QtGui.QImage(
                                 array.data,
                                 array.shape[1],
@@ -2144,30 +2162,11 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.undo_queue.append(event)
             return True
         if event[0] == "relabel":
-            image_name = str(event[1])
-            target_class_name: str = str(event[2])
-            selection: list[tuple[str, QtCore.QPointF]] = cast(
-                list[tuple[str, QtCore.QPointF]], event[3]
-            )
-            for class_name, point in selection:
-                self.points[image_name][class_name].remove(point)
-                self.update_point_count.emit(
-                    image_name,
-                    class_name,
-                    len(self.points[image_name][class_name]),
-                )
-                if target_class_name not in self.points[image_name]:
-                    self.points[image_name][target_class_name] = []
-                self.points[image_name][target_class_name].append(point)
-            self.update_point_count.emit(
-                image_name,
-                target_class_name,
-                len(self.points[image_name][target_class_name]),
-            )
-            if self.current_image_name == image_name:
-                self.display_points()
-            self.undo_queue.append(event)
-            return True
+            if self._apply_relabel(event, undo=False):
+                self.undo_queue.append(event)
+                return True
+            self.redo_queue.append(event)
+            return False
         if event[0] == "annotation_json":
             if self._apply_annotation_history_snapshot(
                 str(event[1]),
@@ -2188,25 +2187,83 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def relabel_selected_points(self) -> None:
         """Move selected count points to the active class with undo support."""
-        if self.current_class_name is not None:
-            event: HistoryEvent = (
-                "relabel",
-                self.current_image_name,
-                self.current_class_name,
-                list(self.selection),
-            )
-            self._append_history_event(event)
-            for class_name, point in self.selection:
-                # Remove original point
-                self.points[self.current_image_name][class_name].remove(point)
-                self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
-                if self.current_class_name not in self.points[self.current_image_name]:
-                    self.points[self.current_image_name][self.current_class_name] = []
-                self.points[self.current_image_name][self.current_class_name].append(point)
-                self.update_point_count.emit(self.current_image_name, self.current_class_name, len(self.points[self.current_image_name][self.current_class_name]))
-            self.selection = []
+        if self.current_class_name is not None and self.selection:
+            self.change_selected_point_class(self.current_class_name)
+            self.selection.clear()
             self.display_points()
-            self.dirty = True
+
+    def change_selected_point_class(self, target_class: str) -> bool:
+        """Change the class of selected dots as one undoable edit.
+
+        Args:
+            target_class: Existing destination class.
+
+        Returns:
+            Whether any dot changed class.
+        """
+        image_name: str | None = self.current_image_name
+        if not image_name or target_class not in self.classes:
+            return False
+        changed: list[tuple[str, QtCore.QPointF]] = [
+            (name, point) for name, point in self.selection if name != target_class
+        ]
+        event: HistoryEvent = ("relabel", image_name, target_class, changed)
+        if not changed or not self._apply_relabel(event, undo=False):
+            return False
+        self._append_history_event(event)
+        return True
+
+    def _apply_relabel(self, event: HistoryEvent, *, undo: bool) -> bool:
+        """Apply a class change or restore the original classes.
+
+        Args:
+            event: Image, destination class, and original class of each changed dot.
+            undo: Whether to restore the original classes.
+
+        Returns:
+            Whether all recorded dots and classes were available for the edit.
+        """
+        image_name: str = str(event[1])
+        target_class: str = str(event[2])
+        changed: list[tuple[str, QtCore.QPointF]] = cast(
+            list[tuple[str, QtCore.QPointF]], event[3]
+        )
+        buckets: dict[str, list[QtCore.QPointF]] = self.points.get(image_name, {})
+        removed: dict[str, set[int]] = {}
+        added: dict[str, list[QtCore.QPointF]] = {}
+        new_classes: dict[int, str] = {}
+        for original_class, point in changed:
+            source: str = target_class if undo else original_class
+            destination: str = original_class if undo else target_class
+            # Coincident dots can belong to different selections.
+            removed.setdefault(source, set()).add(id(point))
+            added.setdefault(destination, []).append(point)
+            new_classes[id(point)] = destination
+        if not (removed.keys() | added.keys()).issubset(self.classes):
+            return False
+        remaining: dict[str, list[QtCore.QPointF]] = {}
+        # Validate every source bucket before changing any counts or dots.
+        for name, point_ids in removed.items():
+            existing: list[QtCore.QPointF] = buckets.get(name, [])
+            remaining[name] = [
+                point for point in existing if id(point) not in point_ids
+            ]
+            if len(existing) - len(remaining[name]) != len(point_ids):
+                return False
+        for name, points in remaining.items():
+            buckets[name][:] = points
+        for name, points in added.items():
+            buckets.setdefault(name, []).extend(points)
+        self.dirty = True
+        for name in removed.keys() | added.keys():
+            self.update_point_count.emit(image_name, name, len(buckets[name]))
+        if self.current_image_name == image_name:
+            self.selection = [
+                (new_classes.get(id(point), name), point)
+                for name, point in self.selection
+            ]
+            self.display_points()
+        return True
 
     def rename_class(self, old_class, new_class):
         index = self.classes.index(old_class)
@@ -2491,30 +2548,11 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.redo_queue.append(event)
             return True
         if event[0] == "relabel":
-            image_name = str(event[1])
-            target_class_name: str = str(event[2])
-            selection: list[tuple[str, QtCore.QPointF]] = cast(
-                list[tuple[str, QtCore.QPointF]], event[3]
-            )
-            for class_name, point in selection:
-                self.points[image_name][target_class_name].remove(point)
-                self.update_point_count.emit(
-                    image_name,
-                    target_class_name,
-                    len(self.points[image_name][target_class_name]),
-                )
-                if class_name not in self.points[image_name]:
-                    self.points[image_name][class_name] = []
-                self.points[image_name][class_name].append(point)
-                self.update_point_count.emit(
-                    image_name,
-                    class_name,
-                    len(self.points[image_name][class_name]),
-                )
-            if self.current_image_name == image_name:
-                self.display_points()
-            self.redo_queue.append(event)
-            return True
+            if self._apply_relabel(event, undo=True):
+                self.redo_queue.append(event)
+                return True
+            self.undo_queue.append(event)
+            return False
         if event[0] == "annotation_json":
             if self._apply_annotation_history_snapshot(
                 str(event[1]),

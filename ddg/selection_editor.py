@@ -84,7 +84,11 @@ class SelectionEditor(QtCore.QObject):
     """Provide the same selection and edit gestures for both kinds of geometry."""
 
     def __init__(
-        self, controls: WorkspaceControls, view: CentralGraphicsView, canvas: Canvas
+        self,
+        controls: WorkspaceControls,
+        view: CentralGraphicsView,
+        canvas: Canvas,
+        dot_menu: QtWidgets.QMenu,
     ) -> None:
         """Install selection gestures on one pane, retaining C/Z/X navigation.
 
@@ -92,11 +96,13 @@ class SelectionEditor(QtCore.QObject):
             controls: Shared workspace tools.
             view: Target graphics view.
             canvas: Owning scene.
+            dot_menu: Existing selection menu for Count dots.
         """
         super().__init__(view)
         self.controls: WorkspaceControls = controls
         self.view: CentralGraphicsView = view
         self.canvas: Canvas = canvas
+        self.dot_menu: QtWidgets.QMenu = dot_menu
         self.gesture: str = ""
         self.start: QtCore.QPoint = QtCore.QPoint()
         self.source_start: QtCore.QPointF = QtCore.QPointF()
@@ -106,6 +112,11 @@ class SelectionEditor(QtCore.QObject):
             QtWidgets.QRubberBand.Shape.Rectangle, view.viewport()
         )
         self.menu: QtWidgets.QMenu = QtWidgets.QMenu(view)
+        self.change_class_action: QtGui.QAction = self.menu.addAction(
+            "Change class…", self.change_class
+        )
+        dot_menu.insertAction(dot_menu.actions()[0], self.change_class_action)
+        dot_menu.aboutToShow.connect(self.update_menu)
         self.menu.addAction("Move by pixel offset…", self.move_by_offset)
         self.menu.addAction("Delete selection", self.delete_selection)
         self.menu.addAction("Clear selection", self.clear)
@@ -135,6 +146,16 @@ class SelectionEditor(QtCore.QObject):
             QtCore.QEvent.Type.MouseMove,
             QtCore.QEvent.Type.ContextMenu,
         } or sip.isdeleted(self.view):
+            return False
+        if self.controls.mode is InteractionMode.COUNT:
+            if (
+                watched is self.view.viewport()
+                and kind == QtCore.QEvent.Type.ContextMenu
+                and self.canvas.selection
+            ):
+                context: QtGui.QContextMenuEvent = cast(QtGui.QContextMenuEvent, event)
+                self.dot_menu.exec(context.globalPos())
+                return True
             return False
         if self.controls.mode is not InteractionMode.SELECT:
             return False
@@ -199,7 +220,8 @@ class SelectionEditor(QtCore.QObject):
         return "\n".join(lines)
 
     def update_menu(self) -> None:
-        """Enable properties only for a single selected annotation without dots."""
+        """Enable actions for the current mix of dots and annotations."""
+        self.change_class_action.setEnabled(bool(self.canvas.selection))
         self.properties_action.setEnabled(
             len(self.canvas.selected_annotation_indices) == 1
             and not self.canvas.selection
@@ -208,6 +230,39 @@ class SelectionEditor(QtCore.QObject):
     def properties(self) -> None:
         """Use the existing properties editor for one selected annotation."""
         self.controls.widget.edit_selected_annotation_properties_for_canvas(self.canvas)
+
+    def change_class(self) -> None:
+        """Choose an existing class for selected count dots."""
+        if not self.canvas.selection or not self.canvas.classes:
+            return
+        count: int = len(self.canvas.selection)
+        classes: set[str] = {name for name, _point in self.canvas.selection}
+        current: str = next(iter(classes)) if len(classes) == 1 else "Mixed classes"
+        annotations: int = len(self.canvas.selected_annotation_indices)
+        label: str = (
+            f"Change class for {count} selected {'dot' if count == 1 else 'dots'}."
+        )
+        label += f"\nCurrent class: {current}"
+        if annotations:
+            label += "\nSelected annotations keep their labels."
+
+        dialog: QtWidgets.QInputDialog = QtWidgets.QInputDialog(self.view)
+        dialog.setWindowTitle("Change class")
+        dialog.setLabelText(label)
+        dialog.setComboBoxItems(self.canvas.classes)
+        dialog.setTextValue(self.canvas.current_class_name or self.canvas.classes[0])
+        dialog.setOkButtonText("Apply")
+        accepted: int = dialog.exec()
+        target: str = dialog.textValue()
+        dialog.deleteLater()
+        if accepted and self.canvas.change_selected_point_class(target):
+            current_canvas: Canvas = self.controls.widget.canvas
+            if (
+                self.canvas is not current_canvas
+                and self.canvas.current_image_name == current_canvas.current_image_name
+            ):
+                current_canvas.display_points()
+            self.controls.refresh()
 
     def refresh_selection(self) -> None:
         """Render selection highlights and handles without changing geometry."""

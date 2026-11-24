@@ -42,6 +42,73 @@ def test_compare_split_button(window: MainWindow, qtbot: Any) -> None:
     qtbot.wait(10)
 
 
+def test_batch_change_class_in_reference(window: MainWindow, qtbot: Any) -> None:
+    """Reclassify a mixed selection in Reference and undo it as one edit.
+
+    Args:
+        window: Visible main window.
+        qtbot: Qt interaction fixture.
+    """
+    widget: Any = window.centralWidget()
+    controls: Any = window.workspace_controls
+    canvas: Any = widget.reference_canvas
+    widget.canvas.classes.extend(["Other", "Target"])
+    widget.canvas.colors.update(
+        Other=QtGui.QColor("blue"), Target=QtGui.QColor("green")
+    )
+    widget.point_widget.display_count_tree()
+    canvas.add_point(QtCore.QPointF(300, 300))
+    canvas.add_point(QtCore.QPointF(300, 300))
+    canvas.set_current_class(1)
+    canvas.add_point(QtCore.QPointF(600, 300))
+    canvas.set_current_class(0)
+    canvas.add_landmark_annotation(QtCore.QPointF(450, 450))
+    points: dict[str, list[QtCore.QPointF]] = canvas.points[canvas.current_image_name]
+    untouched: QtCore.QPointF = points["Bird"][0]
+    first: QtCore.QPointF = points["Bird"][1]
+    second: QtCore.QPointF = points["Other"][0]
+    view: Any = widget.reference_graphics_view
+    view.view_activated.emit()
+    controls.select_tool(InteractionMode.SELECT)
+    canvas.selection = [("Bird", first), ("Other", second)]
+    canvas.select_external_annotation(0)
+    editor: Any = controls.editors[view]
+    editor.refresh_selection()
+    assert editor.change_class_action in controls.dot_menus[1].actions()
+    assert editor.change_class_action in editor.menu.actions()
+    counts: list[tuple[str, str, int]] = []
+    canvas.update_point_count.connect(
+        lambda image, name, count: counts.append((image, name, count))
+    )
+    history_size: int = len(widget._global_undo_order)
+
+    def apply_target() -> None:
+        """Choose the target in the actual Change class dialog."""
+        dialog: QtWidgets.QInputDialog = QtWidgets.QApplication.activeModalWidget()
+        dialog.setTextValue("Target")
+        dialog.accept()
+
+    QtCore.QTimer.singleShot(0, apply_target)
+    editor.change_class_action.trigger()
+    assert len(widget._global_undo_order) == history_size + 1
+    assert len(points["Bird"]) == 1 and points["Bird"][0] is untouched
+    assert points["Target"] == [first, second]
+    assert canvas.selection == [("Target", first), ("Target", second)]
+    assert canvas.selected_annotation_indices == {0}
+    assert widget.canvas.current_class_name == "Bird"
+    assert widget.canvas.dirty
+    assert set(counts) == {
+        ("b.png", "Bird", 1),
+        ("b.png", "Other", 0),
+        ("b.png", "Target", 2),
+    }
+    widget.undo_global_history()
+    assert points["Bird"][1] is first and points["Other"][0] is second
+    assert not points["Target"]
+    widget.redo_global_history()
+    assert points["Target"] == [first, second]
+
+
 def test_mixed_drag_delete_and_history(window: MainWindow, qtbot: Any) -> None:
     """Dots and annotations move/delete together, one history event per operation.
 

@@ -664,6 +664,13 @@ class ResponsiveWorkspace(QtCore.QObject):
             [window.left_sidebar_action, window.right_sidebar_action],
             controls.compare_button,
         )
+        # Keep the visible state distinct even with a flat native toolbar style.
+        for button in panels_group.buttons:
+            button.setAutoRaise(False)
+            button.setStyleSheet(
+                "QToolButton:checked { background-color: palette(midlight); "
+                "border: 1px inset palette(mid); }"
+            )
         controls.compare_button.menu().setTitle("Compare layout")
         tools_group: ToolbarGroup = ToolbarGroup(
             "Tools",

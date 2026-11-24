@@ -42,7 +42,7 @@ class EnhancementDialog(QtWidgets.QDialog):
         self.setWindowTitle(f"Enhance {pane.label.text().title()}")
         layout: QtWidgets.QFormLayout = QtWidgets.QFormLayout(self)
         self.brightness: QtWidgets.QSpinBox = QtWidgets.QSpinBox(self)
-        self.brightness.setRange(0, 128)
+        self.brightness.setRange(-100, 128)
         self.contrast: QtWidgets.QSpinBox = QtWidgets.QSpinBox(self)
         self.contrast.setRange(-100, 100)
         values: tuple[int, int] = canvas.enhancements.get(self.image_path, (0, 0))
@@ -60,6 +60,9 @@ class EnhancementDialog(QtWidgets.QDialog):
             "Reset", QtWidgets.QDialogButtonBox.ButtonRole.ResetRole
         )
         buttons.addButton(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        for button in buttons.buttons():
+            button.setAutoDefault(False)
+        apply_button.setDefault(True)
         buttons.rejected.connect(self.close)
         apply_button.clicked.connect(self.apply)
         reset_button.clicked.connect(self.reset)
@@ -88,6 +91,8 @@ class EnhancementDialog(QtWidgets.QDialog):
             )
             self.owner.refresh()
             return
+        self.brightness.interpretText()
+        self.contrast.interpretText()
         self.canvas.enhancements[self.image_path] = (
             self.brightness.value(),
             self.contrast.value(),

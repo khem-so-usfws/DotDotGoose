@@ -69,7 +69,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sidebar_toolbar.setMovable(False)
         sidebar_toolbar.setFloatable(False)
         self.left_sidebar_action: QtGui.QAction = view_menu.addAction(
-            self.tr("Left panel")
+            self.tr("Left sidebar")
         )
         self.left_sidebar_action.setCheckable(True)
         self.left_sidebar_action.setChecked(True)
@@ -79,7 +79,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         sidebar_toolbar.addAction(self.left_sidebar_action)
         self.right_sidebar_action: QtGui.QAction = view_menu.addAction(
-            self.tr("Right panel")
+            self.tr("Right sidebar")
         )
         self.right_sidebar_action.setCheckable(True)
         self.right_sidebar_action.setChecked(True)

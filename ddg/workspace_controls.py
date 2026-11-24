@@ -122,6 +122,14 @@ class WorkspaceControls(QtCore.QObject):
         navigator_action.setToolTip("Show or hide the overview navigator in both panes")
         self.display_toolbar.addAction(navigator_action)
         self.display_actions["Navigator"] = navigator_action
+        annotations_action: QtGui.QAction = self.display_toolbar.addAction(
+            "Annotations"
+        )
+        annotations_action.setCheckable(True)
+        annotations_action.setChecked(True)
+        annotations_action.setToolTip("Show or hide annotations in both panes")
+        annotations_action.toggled.connect(self.set_annotations_visible)
+        self.display_actions["Annotations"] = annotations_action
         self.editors: dict[CentralGraphicsView, SelectionEditor] = {}
         self.dot_menus: list[QtWidgets.QMenu] = []
         self.annotation_menus: list[QtWidgets.QMenu] = []
@@ -152,7 +160,7 @@ class WorkspaceControls(QtCore.QObject):
                 "Clear annotation selection", canvas.clear_external_annotation_selection
             )
             self.annotation_menus.append(menu)
-            self.editors[view] = SelectionEditor(self, view, canvas)
+            self.editors[view] = SelectionEditor(self, view, canvas, button.menu())
         self.save_indicator: QtWidgets.QLabel = self.feedback.save_label
         self.save_indicator.setFixedWidth(
             self.save_indicator.fontMetrics().horizontalAdvance("Unsaved changes") + 24
@@ -183,6 +191,17 @@ class WorkspaceControls(QtCore.QObject):
         bar.setIconSize(QtCore.QSize(18, 18))
         self.window.addToolBar(bar)
         return bar
+
+    def set_annotations_visible(self, visible: bool) -> None:
+        """Update annotation visibility in Current and Reference.
+
+        Args:
+            visible: Whether annotation graphics should be shown.
+        """
+        for pane, canvas in self.feedback.panes:
+            self.editors[pane.graphics_view].cancel_gesture()
+            canvas.set_annotations_visible(visible)
+        self.refresh()
 
     def select_tool(self, mode: InteractionMode) -> bool:
         """Select one workspace tool without discarding unfinished geometry.
