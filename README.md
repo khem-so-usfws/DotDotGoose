@@ -296,6 +296,19 @@ are available from the
 [AMNH DotDotGoose page](https://biodiversityinformatics.amnh.org/open_source/dotdotgoose/).
 Use this fork's releases for the features described here.
 
+## Generative AI disclosure
+
+During October and November 2026, OpenAI ChatGPT helped generate and revise
+Python code, automated tests, and documentation for this fork, including work
+on native annotations, dockable image panes, and workspace controls.
+Development of version 1.9.1 used OpenAI Codex with the GPT-6 model family.
+The fork maintainer reviewed changes and tested application behavior on Windows.
+Automated tests checked the affected workflows. The maintainer is responsible
+for the released software.
+
+Any use of trade, firm, or product names is for descriptive purposes only and
+does not imply endorsement by the U.S. Government.
+
 ## Contributors
 
 - Peter Erst — https://github.com/persts
