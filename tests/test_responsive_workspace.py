@@ -38,7 +38,7 @@ def test_pending_fields_follow_original_image(
     assert canvas.custom_fields["data"]["Note"]["a.png"] == "Current text"
     assert not line.timer.isActive()
     assert line.text() == ""
-    assert widget.groupBoxImageData.title() == "Image data — Reference"
+    assert widget.groupBoxImageData.title() == "Image data — Pane 2"
     assert widget.groupBoxImageData.toolTip() == "b.png"
     qtbot.keyClicks(line, "Reference text")
     path: Path = tmp_path / "survey.pnt"
@@ -85,9 +85,9 @@ def test_coordinates_reference_and_project_survey(
     widget._set_last_active_view("reference")
     assert widget.lineEditX.text() == "123"
     assert widget.lineEditY.text() == "456"
-    window.compare_action.setChecked(False)
+    widget.image_workspace.set_count(1)
     assert widget.workspace_layout.bound_canvas is widget.canvas
-    assert widget.groupBoxImageData.title() == "Image data — Current"
+    assert widget.groupBoxImageData.title() == "Image data — Pane 1"
 
 
 def test_pane_overflow_and_restore(window: MainWindow, qtbot: Any) -> None:
@@ -102,6 +102,8 @@ def test_pane_overflow_and_restore(window: MainWindow, qtbot: Any) -> None:
     qtbot.wait(30)
     for overflow in widget.workspace_layout.pane_overflows:
         pane: Any = overflow.pane
+        if not pane.isVisible():
+            continue
         assert pane.layout().count() == 3
         assert pane.rect().contains(pane.overflow_button.geometry())
         assert pane.image_combo.width() >= pane.image_combo.minimumWidth()
@@ -121,6 +123,8 @@ def test_pane_overflow_and_restore(window: MainWindow, qtbot: Any) -> None:
     window.resize(1900, 950)
     qtbot.wait(30)
     for overflow in widget.workspace_layout.pane_overflows:
+        if not overflow.pane.isVisible():
+            continue
         assert not overflow.pane.actual_size_button.isHidden()
         assert not overflow.proxies[overflow.pane.actual_size_button].isVisible()
         assert not overflow.enhance.isHidden()

@@ -1,10 +1,10 @@
 # DotDotGoose
 
 DotDotGoose is a free, open source tool for manually counting objects in images.
-This fork extends upstream DotDotGoose 1.7.1 with native annotations, a two-image
-Compare workspace, and shared counting and editing tools.
+This fork extends upstream DotDotGoose 1.7.1 with native annotations, up to four dockable
+image panes, and shared counting and editing tools.
 
-Current fork version **1.8.9.1**.
+Current fork version **1.9.0**.
 
 Count points and annotations retain original-image pixel coordinates, making
 them suitable for review, analysis, and future computer-assisted counting.
@@ -16,29 +16,35 @@ Download the Windows x64 ZIP from this fork's
 Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
 folder. Keep the bundled runtime files alongside the executable.
 
-The 1.8.9.1 package is named `DotDotGoose-1.8.9.1-windows-x64.zip`. Python and Conda
+The 1.9.0 package is named `DotDotGoose-1.9.0-windows-x64.zip`. Python and Conda
 are required only when running from source or building a release.
 
-## Counting and comparison
+## Counting and image panes
 
-Select a class in the left sidebar, choose **Count dots**, and click an image to
-add count points. The same selected class applies to Current and Reference, and
-counts update for edits made in either pane.
+Select a class in the left sidebar, choose **Count dots**, and click any open
+image to add count points. The class and project counts are shared. Each pane
+is editable and has its own photo picker, Previous/Next, Fit, 1:1, rotation,
+and Enhance controls. Previous/Next steps through filenames in that pane alone.
 
-Use the **Compare** toolbar button to show or hide Reference. Its dropdown
-selects **1×2 Side by Side** or **2×1 Stacked**. Each pane has an image picker,
-Previous/Next, Fit, 1:1, rotation, and Enhance controls. Secondary controls move
-into **More (⋯)** when space is limited.
+Use the **Panes** toolbar button to restore your last multi-pane setup. Its
+arrow lets you choose one to four panes, arrange docked views, or reopen an
+individual pane. Docked layouts include side by side or stacked for two panes,
+one large view beside two stacked views for three, and a 2 × 2 grid for four.
 
-- Pan and zoom independently in each pane.
-- Use **Navigator** to show a read-only overview at the bottom right of each pane,
-  with a rectangle showing the visible image extent.
-- Use **Make Current** in Reference's More menu to swap the two displayed images.
-- Undo and redo follow edit order across both panes.
-- Hiding Reference releases its decoded image while remembering the image choice.
+- Drag a pane's title bar out of the workspace to float it on another monitor.
+  Drag it back over the image area and use the docking preview to place it.
+- Use **More > Float pane** or **More > Dock pane** for the same commands.
+- Closing a floating pane remembers its photo and view settings. It reopens
+  **docked** in the main window.
+- The app remembers the open setup, including windows still floating when you
+  quit, along with each pane's image and view settings for that working folder.
+- Click a pane or its header controls to make it active. The right sidebar
+  follows that pane, and Ctrl+Z/Ctrl+Y work across the project in edit order.
+- Use **Navigator** for the overview inset. Zoom and pan are independent.
 
-The workspace loads the displayed Current and Reference images rather than every
-image in the project. See the [Compare guide](docs/compare_pane.md) for details.
+For a colony-wide annotation pass, keep a wide or overlapping reference photo
+in one pane and use the others to mark count regions and cutlines before
+counting. See the [Panes guide](docs/compare_pane.md) for the full workflow.
 
 ### Navigation and keyboard controls
 
@@ -50,7 +56,7 @@ image in the project. See the [Compare guide](docs/compare_pane.md) for details.
 | Z+drag | Rectangle zoom in |
 | X+drag | Rectangle zoom out |
 | Mouse wheel | Incremental zoom |
-| Ctrl+Z / Ctrl+Y | Undo / redo across both panes |
+| Ctrl+Z / Ctrl+Y | Undo / redo across all panes |
 | Enter or double-click while drawing | Finish a line or polygon |
 | Esc | Cancel an unfinished shape or clear selection, retaining the selected tool |
 
@@ -60,7 +66,7 @@ to return to counting after using another tool.
 ## Native annotations and Select/Edit
 
 Use **Landmark**, **Line**, or **Polygon** to mark reference points, cutlines, and
-count regions directly in either pane. The first click activates that pane and
+count regions directly in any open pane. The first click activates that pane and
 starts the shape. Drawing tools stay selected after a shape is completed.
 Finish an unfinished shape with Enter, or cancel it with Esc, before changing
 tools or images or starting a shape in the other pane.
@@ -88,7 +94,7 @@ selection. A single selected annotation also supports properties and right-click
 vertex insertion/deletion. Annotation properties include labels, symbology, and
 locking.
 
-In either pane, **Change class…** works in Count dots and Select/Edit. Choose an
+In any pane, **Change class…** works in Count dots and Select/Edit. Choose an
 existing class and click **Apply**. Counts and dot colors update together, and
 the dots stay selected. The entire change is undoable in one step.
 
@@ -101,31 +107,31 @@ count-region workflows.
 
 ## Image display and workspace
 
-Use the rotation buttons in either pane to rotate its view in 90-degree steps.
+Use the rotation buttons in any pane to rotate its view in 90-degree steps.
 Dots, grids, annotations, and the navigator follow the view. **Enhance** provides
 independent brightness and contrast controls with Apply, Reset, and an original
 image preview. Both values start at 0 and can be lowered to −100. Press Enter
 after typing a value to apply both settings.
 
 Zoom, pan, rotation, and enhancement settings are remembered per image within
-each pane for the current session. **Reset view** returns the image upright and
+each pane and restored when reopening the working folder. **Reset view** returns the image upright and
 fits it to the pane. Display adjustments preserve source-image pixel coordinates.
 
 The main toolbar has three groups separated by pipe dividers.
 
 | Group | Controls |
 | --- | --- |
-| Panels | Left sidebar, Right sidebar, Compare |
+| Panels | Left sidebar, Right sidebar, Panes |
 | Display | Dots, Grid, Navigator, Annotations |
 | Tools | Landmark, Line, Polygon, Select/Edit, Count dots, Class |
 
-Tools share one active mode across both panes. The selected class appears beside
+Tools share one active mode across all panes. The selected class appears beside
 Count dots, or beside the active-tool selector when the toolbar is compact.
 Toolbar groups collapse into menus as the window narrows.
 
-The sidebar and Compare buttons stay pressed while their areas are visible.
+The sidebar buttons stay pressed while their areas are visible.
 Use **Annotations** to hide or show annotations and their count-region overlays
-in both panes. Per-type visibility settings in the Annotations menu are retained.
+in all panes. Per-type visibility settings in the Annotations menu are retained.
 
 Both sidebars start open and can be toggled or resized. The left sidebar starts
 at 425 pixels when space permits. The right sidebar initially receives one quarter
@@ -133,7 +139,7 @@ of the space remaining after the left sidebar. Custom fields scroll vertically
 when needed to keep their editors usable.
 
 The right sidebar follows the most recently clicked pane. Its heading identifies
-Current or Reference. Coordinates and custom-field values belong to that image,
+the pane number. Coordinates and custom-field values belong to that image,
 while Survey ID and field definitions apply to the project. Pending field edits
 are committed to their original image before changing panes or saving.
 
@@ -159,7 +165,7 @@ and Reset to open one, then save the recovered project to a chosen destination.
 Recovery snapshots contain point/project data. Annotation geometry is stored in
 its image sidecars.
 
-See the [recovery documentation](docs/compare_pane.md#workspace-feedback-and-recovery-189)
+See the [recovery documentation](docs/compare_pane.md#saving-and-recovery)
 for snapshot filenames and behavior.
 
 ## Run from source
@@ -210,8 +216,8 @@ The script runs the tests, builds the application using `DotDotGoose.spec`, adds
 the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.8.9.1-windows-x64\DotDotGoose.exe
-dist\DotDotGoose-1.8.9.1-windows-x64.zip
+dist\DotDotGoose-1.9.0-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.9.0-windows-x64.zip
 ```
 
 The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
@@ -229,8 +235,8 @@ folder, add the documentation, and create the ZIP.
 Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-set "DDG_STAGE=%TEMP%\ddg-1.8.9.1-release-%RANDOM%"
-set "DDG_PACKAGE=DotDotGoose-1.8.9.1-windows-x64"
+set "DDG_STAGE=%TEMP%\ddg-1.9.0-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.9.0-windows-x64"
 
 powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
 
@@ -242,30 +248,30 @@ Use the ZIP in that temp folder as the release asset.
 ### Publish a release
 
 Build from the exact commit being released. Extract the ZIP and test image
-loading, counting in both panes, selection/movement/deletion, save and reopen,
+loading, counting in all panes, selection/movement/deletion, save and reopen,
 annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
 Windows machine without Python or Conda when testing the packaged application.
 
 For each new release, commit the final source, push the release branch, and
-create an annotated version tag. The example below uses `main` and `v1.8.9.1`.
+create an annotated version tag. The example below uses `main` and `v1.9.0`.
 Use a new version for a release following an already published tag.
 
 ```bat
 git push origin main
-git tag -a v1.8.9.1 -m "DotDotGoose 1.8.9.1"
-git push origin refs/tags/v1.8.9.1
+git tag -a v1.9.0 -m "DotDotGoose 1.9.0"
+git push origin refs/tags/v1.9.0
 ```
 
 Create a release from that tag on the
 [GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
-add release notes, and attach `DotDotGoose-1.8.9.1-windows-x64.zip`. The attached
+add release notes, and attach `DotDotGoose-1.9.0-windows-x64.zip`. The attached
 Windows ZIP contains the executable and runtime files. GitHub's automatic
 source archives contain the source code.
 
 ## Documentation
 
 - [Native Annotations](docs/native_annotations.md)
-- [Compare, workspace controls, and recovery](docs/compare_pane.md)
+- [Panes, workspace controls, and recovery](docs/compare_pane.md)
 - [Changelog](changelog.md)
 
 ## Upstream project

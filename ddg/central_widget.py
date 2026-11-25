@@ -36,6 +36,7 @@ from ddg.count_region_qa_dialog import CountRegionQADialog
 from ddg.annotations import Annotation, AnnotationShape
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 from ddg.compare_pane import ComparePane
+from ddg.image_workspace import ImageWorkspace
 from ddg.workspace_feedback import WorkspaceFeedback
 from ddg.responsive_workspace import ResponsiveWorkspace
 
@@ -54,14 +55,21 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     compare_layout_changed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
     annotation_tool_armed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        dockable_panes: bool = False,
+    ) -> None:
         """Initialize the DDG central workspace and optional Compare pane.
 
         Args:
             parent: Optional Qt parent widget.
+            dockable_panes: Whether to attach the multi-pane workspace.
         """
         QtWidgets.QDialog.__init__(self, parent)
         self.setupUi(self)
+        self.image_workspace: ImageWorkspace | None = None
         self.canvas: Canvas = Canvas(self)
 
         self.point_widget: PointWidget = PointWidget(self.canvas, self)
@@ -88,20 +96,20 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         # Arrow short cuts to move among images
         self.up_arrow = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Up), self)
         self.up_arrow.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.up_arrow.activated.connect(self.point_widget.previous)
+        self.up_arrow.activated.connect(lambda: self.step_active_image(-1))
 
         self.down_arrow = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_Down), self)
         self.down_arrow.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.down_arrow.activated.connect(self.point_widget.next)
+        self.down_arrow.activated.connect(lambda: self.step_active_image(1))
 
         # Same as arrow keys but conventient for right handed people
         self.up_arrow = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_W), self)
         self.up_arrow.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.up_arrow.activated.connect(self.point_widget.previous)
+        self.up_arrow.activated.connect(lambda: self.step_active_image(-1))
 
         self.down_arrow = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key.Key_S), self)
         self.down_arrow.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self.down_arrow.activated.connect(self.point_widget.next)
+        self.down_arrow.activated.connect(lambda: self.step_active_image(1))
 
         # Make signal slot connections
         self.graphicsView.setScene(self.canvas)
@@ -236,7 +244,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.reference_graphics_view.toggle_grid.connect(
             self.point_widget.checkBoxDisplayGrid.toggle
         )
-        self._connect_reference_annotation_signals()
+        self._connect_reference_annotation_signals(self.reference_graphics_view, self.reference_canvas)
         self.reference_canvas.image_about_to_change.connect(
             self.reference_graphics_view.prepare_for_image_change
         )
@@ -309,11 +317,112 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.quick_save_frame.setGeometry(3, 3, 100, 35)
         self.quick_save_frame.hide()
 
+        self.image_panes: dict[str, tuple[ComparePane, Canvas]] = {
+            "current": (self.current_pane, self.canvas),
+            "reference": (self.compare_pane, self.reference_canvas),
+        }
+        if dockable_panes:
+            self._add_image_pane("pane3")
+            self._add_image_pane("pane4")
+            self.image_workspace = ImageWorkspace(self)
+            self.point_widget.load_active_image = self.load_active_image
+            self.point_widget.active_image_canvas = (
+                lambda: self._active_annotation_context()[0]
+            )
         self.workspace_feedback: WorkspaceFeedback = WorkspaceFeedback(self)
         self.lineEditSurveyId.textChanged.connect(self.canvas.update_survey_id)
         self.canvas.points_loaded.connect(self.lineEditSurveyId.setText)
         self.canvas.points_loaded.connect(lambda _survey: self.refresh_compare_images())
         self.workspace_layout: ResponsiveWorkspace = ResponsiveWorkspace(self)
+        if self.image_workspace is not None:
+            self.image_workspace.connect_project()
+
+    def _add_image_pane(self, name: str) -> None:
+        """Add an editable viewer backed by the shared project.
+
+        Args:
+            name: Stable identifier for the pane.
+        """
+        pane: ComparePane = ComparePane(self.frameCenter)
+        canvas: Canvas = Canvas(self)
+        view: CentralGraphicsView = pane.graphics_view
+        self.image_panes[name] = (pane, canvas)
+        view.setScene(canvas)
+        view.view_activated.connect(lambda: self._set_last_active_view(name))
+        view.annotation_target_requested.connect(
+            lambda: self._claim_pending_compare_annotation_tool(name, view)
+        )
+        view.add_point.connect(canvas.add_point)
+        view.region_selected.connect(canvas.select_points)
+        view.delete_selection.connect(canvas.delete_selected_points)
+        view.relabel_selection.connect(canvas.relabel_selected_points)
+        view.switch_class.connect(self.point_widget.set_active_class)
+        view.toggle_points.connect(self.point_widget.checkBoxDisplayPoints.toggle)
+        view.toggle_grid.connect(self.point_widget.checkBoxDisplayGrid.toggle)
+        canvas.update_point_count.connect(self.point_widget.update_point_count)
+        canvas.history_recorded.connect(lambda: self._record_global_history(canvas))
+        canvas.history_recorded.connect(self._reference_points_edited)
+        canvas.history_cleared.connect(
+            lambda: self._remove_canvas_from_global_history(canvas)
+        )
+        self._connect_reference_annotation_signals(view, canvas)
+        canvas.image_about_to_change.connect(view.prepare_for_image_change)
+        canvas.image_loaded.connect(view.image_loaded)
+        canvas.image_loaded.connect(view.reset_annotation_state)
+        pane.image_requested.connect(lambda image: self.load_pane_image(name, image))
+
+    def load_pane_image(self, pane_name: str, image_name: str) -> None:
+        """Load a photo into one pane without advancing the other panes.
+
+        Args:
+            pane_name: Target pane identifier.
+            image_name: Working-directory image basename.
+        """
+        if pane_name == "current":
+            self.load_current_image(image_name)
+            return
+        pane: ComparePane
+        canvas: Canvas
+        pane, canvas = self.image_panes[pane_name]
+        path: str = os.path.join(self.canvas.directory, image_name)
+        if image_name not in self.canvas.points or not os.path.isfile(path):
+            return
+        self._sync_viewer(canvas)
+        canvas.directory = self.canvas.directory
+        canvas.load_image(path)
+        if canvas.current_image_name == image_name:
+            pane.select_image(image_name)
+
+    def step_active_image(self, direction: int) -> None:
+        """Navigate the active pane in filename order.
+
+        Args:
+            direction: Negative for the previous photo, positive for the next.
+        """
+        if self.image_workspace is None:
+            if direction < 0:
+                self.point_widget.previous()
+            else:
+                self.point_widget.next()
+            return
+        name: str = self._last_active_view_name
+        if name in self.image_workspace.opened:
+            pane: ComparePane = self.image_panes[name][0]
+            if direction < 0:
+                pane.previous_image()
+            else:
+                pane.next_image()
+
+    def load_active_image(self, image_name: str) -> None:
+        """Load a photo selected in the project count list into the active pane.
+
+        Args:
+            image_name: Image basename selected in the left sidebar.
+        """
+        name: str = self._last_active_view_name
+        if self.image_workspace is not None and not self.image_workspace.opened:
+            self.image_workspace.reopen(name)
+        self.load_pane_image(name, image_name)
 
     def load_current_image(self, image_name: str) -> None:
         """Switch Current through the existing canvas image lifecycle.
@@ -327,21 +436,38 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     def _sync_reference_grid(self) -> None:
         """Render the Reference grid using the authoritative sidebar settings."""
-        self.reference_canvas.ui = self.canvas.ui
-        self.reference_canvas.show_grid = self.canvas.show_grid
-        self.reference_canvas.display_grid()
+        for _pane, canvas in self._secondary_panes():
+            canvas.ui = self.canvas.ui
+            canvas.show_grid = self.canvas.show_grid
+            canvas.display_grid()
 
     def _sync_reference_points(self) -> None:
-        """Share project dots and class styling with the Reference canvas."""
-        if self.reference_canvas.points is not self.canvas.points:
-            self.reference_canvas.selection = []
-        self.reference_canvas.points = self.canvas.points
-        self.reference_canvas.classes = self.canvas.classes
-        self.reference_canvas.colors = self.canvas.colors
-        self.reference_canvas.ui = self.canvas.ui
-        self.reference_canvas.current_class_name = self.canvas.current_class_name
-        self.reference_canvas.show_points = self.canvas.show_points
-        self.reference_canvas.display_points()
+        """Refresh the other panes from the shared project."""
+        for _pane, canvas in self._secondary_panes():
+            self._sync_viewer(canvas)
+            canvas.display_points()
+
+    def _secondary_panes(self) -> list[tuple[ComparePane, Canvas]]:
+        """Return viewers beyond the project-owning canvas."""
+        if not hasattr(self, "image_panes"):
+            return [(self.compare_pane, self.reference_canvas)]
+        return list(self.image_panes.values())[1:]
+
+    def _sync_viewer(self, canvas: Canvas) -> None:
+        """Attach shared count data and display preferences to one viewer.
+
+        Args:
+            canvas: Viewer canvas to synchronize.
+        """
+        if canvas.points is not self.canvas.points:
+            canvas.selection = []
+        canvas.points = self.canvas.points
+        canvas.classes = self.canvas.classes
+        canvas.colors = self.canvas.colors
+        canvas.ui = self.canvas.ui
+        canvas.current_class_name = self.canvas.current_class_name
+        canvas.show_points = self.canvas.show_points
+        canvas.show_grid = self.canvas.show_grid
 
     def _reference_points_edited(self) -> None:
         """Ensure reference edits participate in the project's save prompt."""
@@ -381,10 +507,15 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             canvas.move_selected_points(QtCore.QPointF(dx, dy))
             self.canvas.dirty = True
 
-    def _connect_reference_annotation_signals(self) -> None:
-        """Connect annotation editing for the reference viewer."""
-        view: CentralGraphicsView = self.reference_graphics_view
-        canvas: Canvas = self.reference_canvas
+    def _connect_reference_annotation_signals(
+        self, view: CentralGraphicsView, canvas: Canvas
+    ) -> None:
+        """Connect the common annotation tools to a secondary viewer.
+
+        Args:
+            view: Editor producing the signals.
+            canvas: Image scene receiving edits.
+        """
         view.annotation_point_completed.connect(canvas.add_landmark_annotation)
         view.line_completed.connect(canvas.add_line_annotation)
         view.polygon_completed.connect(canvas.add_polygon_annotation)
@@ -512,7 +643,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.workspace_feedback.transfer_mode = mode
         return True
 
-    def _set_last_active_view(self, view_name: str) -> None:
+    def _set_last_active_view(self, view_name: str) -> bool:
         """Remember the image pane most recently clicked by the user.
 
         Hover/focus is intentionally not used here. In a stacked comparison,
@@ -520,17 +651,31 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         that must not silently retarget annotation commands.
 
         Args:
-            view_name: ``"current"`` or ``"reference"``.
+            view_name: Stable identifier of the clicked pane.
+
+        Returns:
+            Whether the pane became active.
         """
-        if view_name in {"current", "reference"}:
-            self._last_active_view_name = view_name
-            if hasattr(self, "workspace_layout"):
-                self.workspace_layout.bind_active()
-            if hasattr(self, "workspace_feedback"):
-                self.workspace_feedback.refresh()
+        if view_name not in self.image_panes:
+            return False
+        if self.image_workspace is not None:
+            pane: ComparePane = self.image_panes[view_name][0]
+            allowed: bool = self.image_workspace.activate(view_name)
+            pane.graphics_view.annotation_target_blocked = not allowed
+            if not allowed:
+                return False
+        self._last_active_view_name = view_name
+        if hasattr(self, "workspace_layout"):
+            self.workspace_layout.bind_active()
+        if hasattr(self, "workspace_feedback"):
+            self.workspace_feedback.refresh()
+        return True
 
     def _active_annotation_context(self) -> tuple[Canvas, CentralGraphicsView]:
         """Return the last-clicked canvas/view for annotation commands."""
+        if self.image_workspace is not None:
+            pane, canvas = self.image_panes[self._last_active_view_name]
+            return canvas, pane.graphics_view
         if self._compare_enabled and self._last_active_view_name == "reference":
             return self.reference_canvas, self.reference_graphics_view
         return self.canvas, self.graphicsView
@@ -569,7 +714,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self._global_undo_order.append(canvas)
         self._global_redo_order = []
         self.canvas.clear_redo_history()
-        self.reference_canvas.clear_redo_history()
+        for _pane, secondary in self._secondary_panes():
+            secondary.clear_redo_history()
+        if self.image_workspace is not None:
+            self.image_workspace.refresh_shared_edit(canvas, canvas.undo_queue[-1])
 
     def _remove_canvas_from_global_history(self, canvas: Canvas) -> None:
         """Remove stale global-history entries for one reset canvas.
@@ -578,7 +726,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             canvas: Canvas whose local undo/redo queues were cleared.
         """
         if canvas is self.canvas:
-            self.reference_canvas.clear_queues()
+            for _pane, secondary in self._secondary_panes():
+                secondary.clear_queues()
             self._sync_reference_points()
         self._global_undo_order = [
             item for item in self._global_undo_order if item is not canvas
@@ -596,6 +745,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.canvas.dirty = True
             self.canvas.display_points()
             self._global_redo_order.append(canvas)
+            if self.image_workspace is not None and canvas.redo_queue:
+                self.image_workspace.refresh_shared_edit(canvas, canvas.redo_queue[-1])
             return
         # A failed persistence operation leaves the local event untouched. Keep
         # the same event at the top globally rather than skipping to older work.
@@ -610,16 +761,22 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.canvas.dirty = True
             self.canvas.display_points()
             self._global_undo_order.append(canvas)
+            if self.image_workspace is not None and canvas.undo_queue:
+                self.image_workspace.refresh_shared_edit(canvas, canvas.undo_queue[-1])
             return
         # Match undo failure semantics: preserve chronology and stop here.
         self._global_redo_order.append(canvas)
 
     def compare_enabled(self) -> bool:
         """Return whether the reference comparison pane is visible."""
+        if self.image_workspace is not None:
+            return len(self.image_workspace.opened) > 1
         return self._compare_enabled
 
     def compare_layout(self) -> str:
         """Return ``1x2`` for side-by-side or ``2x1`` for stacked layout."""
+        if self.image_workspace is not None:
+            return self.image_workspace.orientation
         return (
             "1x2"
             if self.compare_splitter.orientation() == QtCore.Qt.Orientation.Horizontal
@@ -632,6 +789,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         Args:
             enabled: Whether comparison should be visible.
         """
+        if self.image_workspace is not None:
+            self.image_workspace.toggle(enabled)
+            return
         enabled = bool(enabled)
         if (
             not enabled
@@ -679,6 +839,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             layout_name: ``1x2`` for horizontal or ``2x1`` for vertical.
         """
         normalized: str = "2x1" if layout_name == "2x1" else "1x2"
+        if self.image_workspace is not None:
+            self.image_workspace.set_layout(normalized)
+            return
         orientation: QtCore.Qt.Orientation = (
             QtCore.Qt.Orientation.Vertical
             if normalized == "2x1"
@@ -704,6 +867,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             directory: Current DDG working directory.
             image_name: Newly loaded Current image basename.
         """
+        if self.image_workspace is not None:
+            self.image_workspace.image_loaded(directory, image_name)
+            return
         del directory
         self.current_compare_label.setText(self.tr("CURRENT"))
         self.refresh_compare_images()
@@ -745,6 +911,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             preferred: Reference basename to preserve when possible.
             load_if_needed: Load a sensible reference if none is loaded.
         """
+        if self.image_workspace is not None:
+            self.image_workspace.refresh_images()
+            return
         all_names: list[str] = [
             name
             for name in sorted(self.canvas.points)
@@ -787,6 +956,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         Args:
             image_name: Image basename from the current DDG working directory.
         """
+        if self.image_workspace is not None:
+            self.load_pane_image("reference", image_name)
+            return
         if not image_name or image_name == self.canvas.current_image_name:
             return
         self._clear_pending_compare_annotation_tool()
@@ -814,17 +986,20 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
     ) -> None:
         """Apply native-annotation visibility to both displayed images."""
         self.canvas.set_annotation_type_visible(shape_type, visible)
-        self.reference_canvas.set_annotation_type_visible(shape_type, visible)
+        for _pane, canvas in self._secondary_panes():
+            canvas.set_annotation_type_visible(shape_type, visible)
 
     def set_dim_outside_count_region(self, enabled: bool) -> None:
         """Apply count-region dimming preference to both displayed images."""
         self.canvas.set_dim_outside_count_region(enabled)
-        self.reference_canvas.set_dim_outside_count_region(enabled)
+        for _pane, canvas in self._secondary_panes():
+            canvas.set_dim_outside_count_region(enabled)
 
     def refresh_annotation_styles(self) -> None:
         """Refresh annotation symbology in Current and Reference panes."""
         self.canvas.refresh_external_annotation_styles()
-        self.reference_canvas.refresh_external_annotation_styles()
+        for _pane, canvas in self._secondary_panes():
+            canvas.refresh_external_annotation_styles()
 
     def cancel_annotation(self) -> None:
         """Cancel an armed tool or the last-clicked pane's annotation tool."""
@@ -1046,7 +1221,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     def show_count_region_qa(self) -> None:
         """Show active-image count-region QA with outside-point navigation."""
-        if not self.canvas.current_image_name:
+        canvas, view = self._active_annotation_context()
+        if not canvas.current_image_name:
             QtWidgets.QMessageBox.warning(
                 self,
                 self.tr("No Image Loaded"),
@@ -1054,7 +1230,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             )
             return
 
-        qa: dict[str, object] = self.canvas.count_region_qa()
+        qa: dict[str, object] = canvas.count_region_qa()
         if not bool(qa["has_regions"]):
             QtWidgets.QMessageBox.information(
                 self,
@@ -1087,10 +1263,10 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
         dialog: CountRegionQADialog = CountRegionQADialog(
             summary_lines=lines,
-            outside_points=self.canvas.outside_count_region_points(),
+            outside_points=canvas.outside_count_region_points(),
             parent=self,
         )
-        dialog.point_requested.connect(self._center_on_count_region_qa_point)
+        dialog.point_requested.connect(view.centerOn)
         dialog.focus_current_point()
         dialog.exec()
 
@@ -1100,10 +1276,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         Args:
             point: Point in source-image pixel coordinates.
         """
-        self.graphicsView.centerOn(point)
+        self._active_annotation_context()[1].centerOn(point)
 
     def resizeEvent(self, theEvent):
-        self.graphicsView.resize_image()
+        if self.image_workspace is None:
+            self.graphicsView.resize_image()
 
     # Image data field functions
     def add_field(self):
@@ -1258,6 +1435,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.frameCustomField.show()
 
     def select_folder(self):
+        if self.image_workspace is not None and not self.image_workspace.can_switch():
+            return
         name = QtWidgets.QFileDialog.getExistingDirectory(self, self.tr('Select image folder'), self.canvas.directory)
         if name != '':
             self.canvas.load([QtCore.QUrl('file:{}'.format(name))])

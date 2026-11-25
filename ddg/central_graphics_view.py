@@ -107,6 +107,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """
         QtWidgets.QGraphicsView.__init__(self, parent)
         self.rotation_degrees: int = 0
+        self.preserve_docked_view: bool = False
         self.navigator_enabled: bool = False
         self.navigator_image: QtGui.QImage = QtGui.QImage()
         self.navigator_source_size: QtCore.QSize = QtCore.QSize()
@@ -927,6 +928,9 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         shift_pressed: bool = bool(
             event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
         )
+        if self.preserve_docked_view and self.annotation_target_blocked:
+            event.accept()
+            return
         if (
             event.button() == QtCore.Qt.MouseButton.LeftButton
             and not shift_pressed
@@ -1258,8 +1262,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         Args:
             event: Qt resize event.
         """
-        del event
-        self.resize_image()
+        if self.preserve_docked_view:
+            # Docking can resize the viewport several times in one interaction.
+            super().resizeEvent(event)
+        else:
+            self.resize_image()
 
     def resize_image(self) -> None:
         """Fit the scene when neither scrollbar is currently active."""

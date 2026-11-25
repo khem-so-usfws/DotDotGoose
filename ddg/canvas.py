@@ -217,18 +217,18 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def delete_selected_points(self) -> None:
         """Delete selected count points and record one undoable event."""
-        if self.current_image_name is not None:
+        if self.current_image_name is not None and self.selection:
             points = self.points[self.current_image_name]
             event: HistoryEvent = (
                 "delete", self.current_image_name, list(self.selection)
             )
-            self._append_history_event(event)
             for class_name, point in self.selection:
                 points[class_name].remove(point)
                 self.update_point_count.emit(self.current_image_name, class_name, len(self.points[self.current_image_name][class_name]))
             self.selection = []
             self.display_points()
             self.dirty = True
+            self._append_history_event(event)
 
     def move_selected_points(self, offset: QtCore.QPointF) -> None:
         """Move selected dots and record their original coordinates.
@@ -2287,6 +2287,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         """Reset project, image, annotation, and history state."""
         if self.flush_fields is not None:
             self.flush_fields()
+        self.image_about_to_change.emit()
         self.dirty = False
         self.points = {}
         self.colors = {}

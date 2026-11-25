@@ -37,7 +37,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self)
         self.setWindowTitle('DotDotGoose [v {}]'.format(__version__))
         self.setWindowIcon(QtGui.QIcon("icons:ddg.png"))
-        self.setCentralWidget(CentralWidget())
+        self.setCentralWidget(CentralWidget(dockable_panes=True))
         self.about_dialog = AboutDialog(self)
 
         self.error_widget = QtWidgets.QTextBrowser()
@@ -57,12 +57,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Show Image Navigators")
         )
         self.navigator_action.setCheckable(True)
-        self.navigator_action.toggled.connect(
-            self.centralWidget().graphicsView.set_navigator_enabled
-        )
-        self.navigator_action.toggled.connect(
-            self.centralWidget().reference_graphics_view.set_navigator_enabled
-        )
+        for pane, _canvas in self.centralWidget().image_panes.values():
+            self.navigator_action.toggled.connect(pane.graphics_view.set_navigator_enabled)
 
         sidebar_toolbar: QtWidgets.QToolBar = self.addToolBar(self.tr("Sidebars"))
         sidebar_toolbar.setObjectName("sidebarToolbar")
@@ -96,7 +92,7 @@ class MainWindow(QtWidgets.QMainWindow):
         move_dots_action.triggered.connect(self.centralWidget().move_selected_dots)
         view_menu.addSeparator()
         self.compare_action: QtGui.QAction = view_menu.addAction(
-            self.tr("Compare Image")
+            self.tr("Panes")
         )
         self.compare_action.setCheckable(True)
         self.compare_action.setChecked(False)
@@ -108,7 +104,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         compare_layout_menu: QtWidgets.QMenu = view_menu.addMenu(
-            self.tr("Compare Layout")
+            self.tr("Pane Layout")
         )
         self.compare_layout_group: QtGui.QActionGroup = QtGui.QActionGroup(self)
         self.compare_layout_group.setExclusive(True)
@@ -393,17 +389,17 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if mode == "point":
             message: str = self.tr(
-                "Landmark point: click either Current or Reference to place it; "
+                "Landmark point: click an image pane to place it; "
                 "Esc to cancel."
             )
         elif mode == "line":
             message = self.tr(
-                "Cutline armed: click either Current or Reference to place the "
+                "Cutline armed: click an image pane to place the "
                 "first vertex; then Enter/double-click to finish."
             )
         elif mode == "polygon":
             message = self.tr(
-                "Count-region polygon armed: click either Current or Reference "
+                "Count-region polygon armed: click an image pane "
                 "to place the first vertex; then Enter/double-click to finish."
             )
         else:
@@ -429,21 +425,18 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Z+drag: rectangle zoom in\n"
             "  X+drag: rectangle zoom out\n"
             "  Mouse wheel: incremental zoom\n\n"
-            "Compare image\n"
-            "  View > Compare Image shows one reference image beside/below Current.\n"
-            "  Count points can be added in either pane.\n"
-            "  Choose Landmark/Cutline/Count Region, then click directly in "
-            "either pane; the first click chooses the pane and starts drawing.\n"
-            "  Native annotations can be edited in either pane.\n"
-            "  Make Current swaps the reference with the Current image.\n\n"
+            "Image panes\n"
+            "  Panes opens up to four editable images.\n"
+            "  Drag a title bar or use More to float or dock a pane.\n"
+            "  Click a pane directly to activate it and begin editing.\n\n"
             "Native annotations\n"
-            "  Toolbar tools apply to both panes and stay selected.\n"
+            "  Toolbar tools apply to all panes and stay selected.\n"
             "  Count dots returns to counting; Esc clears selection/cancels a draft.\n"
             "  Landmark: one point per click\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
             "  Count region: click vertices, Enter/double-click to finish\n"
             "  Select/Edit: click dots or annotations; Shift+click toggles selection\n"
-            "  Shift+drag from empty space selects enclosed items\n"
+            "  Shift+drag selects enclosed items\n"
             "  Drag selected items to move; Delete removes; Esc clears selection\n"
             "  Single selected annotations expose handles; right-click for vertex edits\n"
             "  C/Z/X navigation overrides also work while annotating\n"
@@ -487,7 +480,13 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event):
-        if self.centralWidget().canvas.dirty_data_check():
+        widget: CentralWidget = self.centralWidget()
+        if widget.image_workspace is not None and not widget.image_workspace.can_switch():
+            event.ignore()
+            return
+        if widget.canvas.dirty_data_check():
+            if widget.image_workspace is not None:
+                widget.image_workspace.shutdown()
             event.accept()
         else:
             event.ignore()

@@ -461,7 +461,7 @@ class ResponsiveWorkspace(QtCore.QObject):
         widget.labelWorkingDirectory = path_label
         directory_row.setStretch(directory_row.indexOf(path_label), 1)
         self.class_indicator: QtWidgets.QLabel | None = None
-        for canvas in (widget.canvas, widget.reference_canvas):
+        for _pane, canvas in widget.image_panes.values():
             canvas.image_about_to_change.connect(self.flush)
             canvas.image_loaded.connect(self.image_changed)
             canvas.flush_fields = self.flush
@@ -499,7 +499,7 @@ class ResponsiveWorkspace(QtCore.QObject):
                 label, lambda r=radio: self.export(r)
             )
             if label == "Overlay…":
-                action.setToolTip("Export the Current image with its dot overlay")
+                action.setToolTip("Export the active image with its dot overlay")
         export_menu.setToolTipsVisible(True)
         point_widget.pushButtonExport.clicked.disconnect(point_widget.export)
         point_widget.pushButtonExport.setText("Export…")
@@ -571,6 +571,8 @@ class ResponsiveWorkspace(QtCore.QObject):
         ):
             canvas = master
             name = master.current_image_name or ""
+        if self.widget.image_workspace is not None and not self.widget.image_workspace.opened:
+            name = ""
         if canvas is self.bound_canvas and name == self.image_name:
             return
         self.flush()
@@ -593,6 +595,15 @@ class ResponsiveWorkspace(QtCore.QObject):
         """Show coordinates, fields, and an explicit Current/Reference heading."""
         reference: bool = self.bound_canvas is self.widget.reference_canvas
         target: str = "Reference" if reference else "Current"
+        if self.widget.image_workspace is not None:
+            target = next(
+                (
+                    pane.label.text()
+                    for pane, canvas in self.widget.image_panes.values()
+                    if canvas is self.bound_canvas
+                ),
+                target,
+            )
         self.widget.groupBoxImageData.setTitle(
             "Image data — " + (target if self.image_name else "No image")
         )
@@ -671,7 +682,7 @@ class ResponsiveWorkspace(QtCore.QObject):
                 "QToolButton:checked { background-color: palette(midlight); "
                 "border: 1px inset palette(mid); }"
             )
-        controls.compare_button.menu().setTitle("Compare layout")
+        controls.compare_button.menu().setTitle("Panes layout")
         tools_group: ToolbarGroup = ToolbarGroup(
             "Tools",
             controls.tools_toolbar,
@@ -801,6 +812,11 @@ class ResponsiveWorkspace(QtCore.QObject):
         }:
             pane: ComparePane = self.header_targets[watched]
             pane.graphics_view.view_activated.emit()
+            if (
+                self.widget.image_workspace is not None
+                and pane.graphics_view is not self.widget._active_annotation_context()[1]
+            ):
+                return True
         if event.type() in {
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.Show,
@@ -823,12 +839,14 @@ class ResponsiveWorkspace(QtCore.QObject):
         current: int = self.widget.current_pane.minimumWidth()
         reference: int = self.widget.compare_pane.minimumWidth()
         center: int = current
-        if self.widget.compare_enabled():
+        if self.widget.image_workspace is None and self.widget.compare_enabled():
             center = (
                 current + reference + self.widget.compare_splitter.handleWidth()
                 if self.widget.compare_layout() == "1x2"
                 else max(current, reference)
             )
+        if self.widget.image_workspace is not None:
+            center = max(220, self.widget.image_workspace.host.minimumSizeHint().width())
         self.widget.frameCenter.setMinimumWidth(center)
         sides: int = 0
         for frame in (self.widget.framePointWidget, self.widget.frameCustomField):

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg.central_graphics_view import InteractionMode
@@ -25,10 +26,9 @@ def test_compare_split_button(window: MainWindow, qtbot: Any) -> None:
     button: QtWidgets.QToolButton = controls.compare_button
     assert button.isChecked()
     assert button.defaultAction() is window.compare_action
-    assert button.menu().actions() == [
-        window.compare_1x2_action,
-        window.compare_2x1_action,
-    ]
+    assert button.text() == "Panes"
+    assert window.compare_1x2_action in button.menu().actions()
+    assert window.compare_2x1_action in button.menu().actions()
     window.compare_2x1_action.trigger()
     assert widget.compare_layout() == "2x1"
     window.compare_action.trigger()
@@ -118,10 +118,14 @@ def test_mixed_drag_delete_and_history(window: MainWindow, qtbot: Any) -> None:
     """
     widget: Any = window.centralWidget()
     for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         canvas.add_point(QtCore.QPointF(400, 300))
         canvas.add_line_annotation([QtCore.QPointF(600, 300), QtCore.QPointF(800, 500)])
     window.workspace_controls.select_tool(InteractionMode.SELECT)
     for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         view: Any = pane.graphics_view
         editor: Any = window.workspace_controls.editors[view]
         view.rotate_view(True)
@@ -234,6 +238,46 @@ def test_first_drag_selects_then_shift_box_and_escape(
     )
     assert len(canvas.selection) == 2
     assert view.interaction_mode is InteractionMode.SELECT
+
+
+@pytest.mark.parametrize("reference", [False, True])
+def test_shift_drag_can_start_on_geometry(
+    window: MainWindow, qtbot: Any, reference: bool
+) -> None:
+    """Shift+drag adds enclosed dots when it starts on a selected dot.
+
+    Args:
+        window: Real application window.
+        qtbot: Qt interaction fixture.
+        reference: Whether to exercise the reference pane.
+    """
+    widget: Any = window.centralWidget()
+    canvas: Any = widget.reference_canvas if reference else widget.canvas
+    view: Any = widget.reference_graphics_view if reference else widget.graphicsView
+    first: QtCore.QPointF = QtCore.QPointF(400, 300)
+    second: QtCore.QPointF = QtCore.QPointF(550, 400)
+    canvas.add_point(first)
+    canvas.add_point(second)
+    canvas.add_polygon_annotation(
+        [
+            QtCore.QPointF(x, y)
+            for x, y in ((200, 100), (900, 100), (900, 650), (200, 650))
+        ]
+    )
+    window.workspace_controls.select_tool(InteractionMode.SELECT)
+    start: QtCore.QPoint = view.mapFromScene(first)
+    end: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(650, 475))
+    left: QtCore.Qt.MouseButton = QtCore.Qt.MouseButton.LeftButton
+    shift: QtCore.Qt.KeyboardModifier = QtCore.Qt.KeyboardModifier.ShiftModifier
+    qtbot.mouseClick(view.viewport(), left, pos=start)
+    assert [point for _name, point in canvas.selection] == [first]
+
+    qtbot.mousePress(view.viewport(), left, modifier=shift, pos=start)
+    qtbot.mouseMove(view.viewport(), end)
+    qtbot.mouseRelease(view.viewport(), left, modifier=shift, pos=end)
+
+    assert [point for _name, point in canvas.selection] == [first, second]
+    assert not canvas.selected_annotation_indices
 
 
 def test_locked_and_failed_write_are_atomic(

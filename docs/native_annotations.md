@@ -52,7 +52,7 @@ Choose **Annotations > Select/Edit Annotation**.
 - Right-click a line or polygon to insert a vertex on the nearest segment.
 - Right-click a vertex to delete it when the remaining geometry stays valid.
 - Press **Delete** to remove an unlocked selected annotation.
-- Use **Ctrl+Z** and **Ctrl+Y** for undo and redo. When Compare is open, history is chronological across Current and Reference rather than tied to the active pane.
+- Use **Ctrl+Z** and **Ctrl+Y** for undo and redo. Undo and redo follow edit order across open and closed image panes.
 
 Locked annotations remain selectable for inspection but cannot be moved, reshaped, or deleted until unlocked.
 
@@ -117,10 +117,10 @@ The shape type and label are separate. Labels can be changed through Annotation 
 
 The source image is never resampled or modified by native annotations. Coordinates remain in original-image pixel space, preserving compatibility with future training-data and multi-image colony workflows.
 
-## Shared toolbar tools (1.8.9 UI revision)
+## Shared toolbar tools
 
 The Tools toolbar exposes Count dots, Landmark, Line, Polygon, and Select/Edit.
-Choose one tool and use either pane directly. Drawing tools stay active after
+Choose one tool and use any open pane directly. Drawing tools stay active after
 completion. Select/Edit handles dots and every annotation type without choosing
 a geometry type first. Shift+click toggles items, Shift+drag from empty space adds
 items fully enclosed by the box, and dragging an already-selected item moves the

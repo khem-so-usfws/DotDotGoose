@@ -3,6 +3,20 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.9.0
+
+- Open up to four editable image panes in one project. Each has an independent
+  photo picker, filename-ordered navigation, and its own view settings.
+- Drag any pane to float it on another monitor or dock it in the image workspace.
+  Float and Dock commands are also available in the pane's More menu.
+- Use the Panes toolbar control to restore the previous setup, change the pane
+  count, arrange the docked panes, or reopen a closed pane. A closed floating
+  pane reopens docked and retains its photo.
+- Remember pane positions, layout, active pane, photos, zoom, pan, rotation,
+  and enhancement settings locally for the working folder.
+- Use the shared class, counts, Select/Edit tools, and project-wide undo across
+  panes. The right sidebar and Count Region QA follow the active image.
+
 ## 1.8.9.1
 
 - Toggle annotation visibility in both panes from the Display toolbar.

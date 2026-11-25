@@ -24,9 +24,13 @@
 # --------------------------------------------------------------------------
 import os
 import sys
+from typing import TYPE_CHECKING, Callable
 from PyQt6 import QtCore, QtGui, QtWidgets, uic
 
 from .chip_dialog import ChipDialog
+
+if TYPE_CHECKING:
+    from .canvas import Canvas
 
 # from .ui_point_widget import Ui_Pointwidget as WIDGET
 if getattr(sys, 'frozen', False):
@@ -43,6 +47,8 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
         QtWidgets.QWidget.__init__(self, parent)
         self.setupUi(self)
         self.canvas = canvas
+        self.load_active_image: Callable[[str], None] | None = None
+        self.active_image_canvas: Callable[[], Canvas] | None = None
 
         self.pushButtonAddClass.clicked.connect(self.add_class)
         self.pushButtonRemoveClass.clicked.connect(self.remove_class)
@@ -207,9 +213,14 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             if file_name[0] != '':
                 self.canvas.export_points(file_name[0])
         elif self.radioButtonOverlay.isChecked():
+            canvas: Canvas = (
+                self.active_image_canvas() if self.active_image_canvas else self.canvas
+            )
+            if not canvas.current_image_name:
+                return
             file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Image With Points'), os.path.join(self.canvas.directory, 'overlay.png'), 'PNG (*.png);;JPG (*.jpg)')
             if file_name[0] != '':
-                self.canvas.export_overlay(file_name[0])
+                canvas.export_overlay(file_name[0])
         else:
             self.chip_dialog = ChipDialog(self.canvas.classes, self.canvas.points, self.canvas.directory, self.canvas.survey_id)
             self.chip_dialog.show()
@@ -225,6 +236,8 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
                 self.canvas.import_metadata(file_name[0])
 
     def load(self):
+        if self.canvas.image_change_allowed and not self.canvas.image_change_allowed():
+            return
         if self.canvas.dirty_data_check():
             file_name = QtWidgets.QFileDialog.getOpenFileName(self, self.tr('Select Points File'), self.canvas.directory, 'Point Files (*.pnt)')
             if file_name[0] != '':
@@ -248,6 +261,8 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             self.select_model_item(item.index())
 
     def reset(self):
+        if self.canvas.image_change_allowed and not self.canvas.image_change_allowed():
+            return
         msgBox = QtWidgets.QMessageBox()
         msgBox.setWindowTitle(self.tr('Warning'))
         msgBox.setText(self.tr('You are about to clear all data'))
@@ -293,6 +308,9 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             if item.column() != 0:
                 index = self.model.index(item.row(), 0)
                 item = self.model.itemFromIndex(index)
+            if self.load_active_image is not None:
+                self.load_active_image(item.text())
+                return
             path = os.path.join(self.canvas.directory, item.text())
             self.canvas.load_image(path)
 

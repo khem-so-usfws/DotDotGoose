@@ -487,20 +487,20 @@ class SelectionEditor(QtCore.QObject):
         self.start = event.position().toPoint()
         self.source_start = self.view.mapToScene(self.start)
         shift: bool = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+        if shift:
+            # Defer hit testing until release so a box can start over geometry.
+            self.gesture = "box"
+            self.rubber.setGeometry(QtCore.QRect(self.start, QtCore.QSize()))
+            event.accept()
+            return
         candidates: list[Target] = self.hits(self.start)
         target: Target | None = self.choose(self.start) if candidates else None
         if candidates and target is None:
             return
         if target is None:
-            if shift:
-                self.gesture = "box"
-                self.rubber.setGeometry(QtCore.QRect(self.start, QtCore.QSize()))
-            else:
-                self.clear()
+            self.clear()
             return
-        if shift:
-            self.toggle(target)
-        elif not self.is_selected(target):
+        if not self.is_selected(target):
             self.clear()
             self.toggle(target)
         elif self.editable():
@@ -549,24 +549,28 @@ class SelectionEditor(QtCore.QObject):
         self.rubber.show()
 
     def release(self, event: QtGui.QMouseEvent) -> None:
-        """Commit one group edit, or finish an additive box selection.
+        """Commit a group edit or finish an additive click or box selection.
 
         Args:
             event: Left-button release.
         """
         position: QtCore.QPoint = event.position().toPoint()
-        if (
-            self.gesture
-            and (position - self.start).manhattanLength()
-            >= QtWidgets.QApplication.startDragDistance()
-        ):
-            if self.gesture == "box":
+        dragged: bool = (
+            position - self.start
+        ).manhattanLength() >= QtWidgets.QApplication.startDragDistance()
+        if self.gesture == "box":
+            if dragged:
                 self.select_box(QtCore.QRect(self.start, position).normalized())
-            else:
-                self.edit(
-                    offset=self.view.mapToScene(position) - self.source_start,
-                    vertex=self.target if self.gesture == "vertex" else None,
-                )
+            elif not self.rubber.isVisible():
+                # A drag that returns to its origin should not toggle the item.
+                target: Target | None = self.choose(self.start)
+                if target is not None:
+                    self.toggle(target)
+        elif self.gesture and dragged:
+            self.edit(
+                offset=self.view.mapToScene(position) - self.source_start,
+                vertex=self.target if self.gesture == "vertex" else None,
+            )
         self.cancel_gesture()
         event.accept()
 

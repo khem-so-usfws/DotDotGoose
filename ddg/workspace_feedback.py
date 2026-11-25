@@ -155,9 +155,8 @@ class WorkspaceFeedback(QtCore.QObject):
         ] = {}
         self.paths: dict[int, str] = {}
         self.dialogs: list[EnhancementDialog] = []
-        self.panes: tuple[tuple[ComparePane, Canvas], ...] = (
-            (widget.current_pane, widget.canvas),
-            (widget.compare_pane, widget.reference_canvas),
+        self.panes: tuple[tuple[ComparePane, Canvas], ...] = tuple(
+            widget.image_panes.values()
         )
         self.labels: list[QtWidgets.QLabel] = []
         self.selection_buttons: list[QtWidgets.QToolButton] = []
@@ -415,10 +414,10 @@ class WorkspaceFeedback(QtCore.QObject):
         Args:
             pane: Owner of the selected dots.
         """
-        self.widget._set_last_active_view(
-            "current" if pane is self.widget.current_pane else "reference"
-        )
-        self.widget.move_selected_dots()
+        for name, (viewer, _canvas) in self.widget.image_panes.items():
+            if viewer is pane and self.widget._set_last_active_view(name):
+                self.widget.move_selected_dots()
+                return
 
     @staticmethod
     def clear_selection(canvas: Canvas) -> None:
@@ -441,7 +440,8 @@ class WorkspaceFeedback(QtCore.QObject):
         if success:
             self.last_save = f"{Path(path).name} at {datetime.now():%H:%M:%S}"
             self.save_notice_until = monotonic() + 5.0
-            self.widget.reference_canvas.dirty = False
+            for _pane, canvas in self.panes:
+                canvas.dirty = False
         self.refresh()
 
     def refresh(self) -> None:
@@ -475,7 +475,7 @@ class WorkspaceFeedback(QtCore.QObject):
                 tool = (
                     "Draw "
                     + self.widget._pending_compare_annotation_mode.value
-                    + " · click either pane"
+                    + " · click any pane"
                 )
             transferring: bool = (
                 self.widget._pending_compare_annotation_mode is None
@@ -616,6 +616,9 @@ class WorkspaceFeedback(QtCore.QObject):
     def recover(self) -> None:
         """Open a snapshot through the normal point-file loader after save checks."""
         canvas: Canvas = self.widget.canvas
+        workspace = self.widget.image_workspace
+        if workspace is not None and not workspace.can_switch():
+            return
         if not canvas.directory or not canvas.dirty_data_check():
             return
         path: str

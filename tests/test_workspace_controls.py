@@ -62,6 +62,8 @@ def test_edit_mode_is_shared_and_escape_keeps_tool(
         canvas.add_line_annotation([QtCore.QPointF(300, 300), QtCore.QPointF(700, 500)])
     window.workspace_controls.actions[InteractionMode.SELECT].trigger()
     for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         view: Any = pane.graphics_view
         assert view.interaction_mode is InteractionMode.SELECT
         pos: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(500, 400))
@@ -130,6 +132,8 @@ def test_sticky_drawing_and_unfinished_guard(window: MainWindow, qtbot: Any) -> 
     assert reference.interaction_mode is InteractionMode.LINE
     controls.actions[InteractionMode.POINT].trigger()
     for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         view: Any = pane.graphics_view
         for point in (QtCore.QPointF(450, 350), QtCore.QPointF(650, 450)):
             qtbot.mouseClick(
@@ -205,7 +209,7 @@ def test_visibility_controls(window: MainWindow, qtbot: Any) -> None:
     assert [button.text() for button in buttons] == [
         "Left sidebar",
         "Right sidebar",
-        "Compare",
+        "Panes",
     ]
     areas: list[QtWidgets.QWidget] = [
         widget.framePointWidget,
@@ -219,20 +223,26 @@ def test_visibility_controls(window: MainWindow, qtbot: Any) -> None:
         button.click()
         assert button.isChecked() and area.isVisible()
 
-    for _pane, canvas in widget.workspace_feedback.panes:
+    for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         canvas.add_landmark_annotation(QtCore.QPointF(400, 300))
         canvas.select_external_annotation(0)
         canvas.add_point(QtCore.QPointF(600, 300))
         assert canvas.external_annotation_items
     show: QtGui.QAction = controls.display_actions["Annotations"]
     show.trigger()
-    for _pane, canvas in widget.workspace_feedback.panes:
+    for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         assert len(canvas.external_annotations) == 1
         assert not canvas.external_annotation_items
         assert not canvas.selected_annotation_indices
         assert canvas.show_points
     show.trigger()
-    for _pane, canvas in widget.workspace_feedback.panes:
+    for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         assert canvas.external_annotation_items
 
 
@@ -245,6 +255,8 @@ def test_count_escape_and_click_alignment(window: MainWindow, qtbot: Any) -> Non
     """
     widget: Any = window.centralWidget()
     for pane, canvas in widget.workspace_feedback.panes:
+        if not pane.isVisible():
+            continue
         view: Any = pane.graphics_view
         pos: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(600, 400))
         expected: QtCore.QPointF = view.mapToScene(pos)

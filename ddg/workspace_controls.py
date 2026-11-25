@@ -46,17 +46,43 @@ class WorkspaceControls(QtCore.QObject):
         panels.setWindowTitle("Panels")
         self.compare_button: QtWidgets.QToolButton = QtWidgets.QToolButton(panels)
         self.compare_button.setDefaultAction(window.compare_action)
-        self.compare_button.setText("Compare")
-        window.compare_action.setIconText("Compare")
+        self.compare_button.setText("Panes")
+        window.compare_action.setIconText("Panes")
         window.compare_action.setToolTip(
-            "Show or hide Reference; use the arrow to choose its layout"
+            "Restore the last multi-pane setup or show only the active pane"
         )
         self.compare_button.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup
         )
         compare_menu: QtWidgets.QMenu = QtWidgets.QMenu(self.compare_button)
+        workspace = self.widget.image_workspace
+        if workspace is not None:
+            count_group: QtGui.QActionGroup = QtGui.QActionGroup(compare_menu)
+            for count in range(1, 5):
+                action: QtGui.QAction = compare_menu.addAction(
+                    f"{count} pane" if count == 1 else f"{count} panes"
+                )
+                action.setCheckable(True)
+                count_group.addAction(action)
+                action.triggered.connect(
+                    lambda _checked=False, total=count: workspace.set_count(total)
+                )
+            compare_menu.aboutToShow.connect(
+                lambda: workspace.update_count_menu(count_group)
+            )
+            compare_menu.addSeparator()
         compare_menu.addAction(window.compare_1x2_action)
         compare_menu.addAction(window.compare_2x1_action)
+        if workspace is not None:
+            compare_menu.addAction("Arrange docked panes", workspace.arrange)
+            reopen: QtWidgets.QMenu = compare_menu.addMenu("Reopen pane")
+            for name, dock in workspace.docks.items():
+                action = reopen.addAction(dock.windowTitle())
+                action.setData(name)
+                action.triggered.connect(
+                    lambda _checked=False, key=name: workspace.reopen(key)
+                )
+            reopen.aboutToShow.connect(lambda: workspace.update_reopen_menu(reopen))
         self.compare_button.setMenu(compare_menu)
         panels.addWidget(self.compare_button)
         panels.addSeparator()
@@ -71,19 +97,19 @@ class WorkspaceControls(QtCore.QObject):
             ),
             InteractionMode.POINT: (
                 "Landmark",
-                "Place landmark point annotations in either pane",
+                "Place landmark point annotations in any pane",
             ),
             InteractionMode.LINE: (
                 "Line",
-                "Draw cutlines in either pane; Enter finishes, Esc cancels the draft",
+                "Draw cutlines in any pane; Enter finishes, Esc cancels the draft",
             ),
             InteractionMode.POLYGON: (
                 "Polygon",
-                "Draw count regions in either pane; Enter finishes, Esc cancels the draft",
+                "Draw count regions in any pane; Enter finishes, Esc cancels the draft",
             ),
             InteractionMode.SELECT: (
                 "Select/Edit",
-                "Select and edit dots or annotations in either pane; Esc clears selection",
+                "Select and edit dots or annotations in any pane; Esc clears selection",
             ),
         }
         for mode, (label, tooltip) in descriptions.items():
@@ -96,7 +122,7 @@ class WorkspaceControls(QtCore.QObject):
                 )
             action.setCheckable(True)
             action.setIconText(label)
-            action.setToolTip(tooltip + ". Applies to both panes.")
+            action.setToolTip(tooltip + ". Applies to all panes.")
             action.setIcon(QtGui.QIcon(f"icons:tool_{mode.value}.svg"))
             self.tool_group.addAction(action)
             self.tools_toolbar.addAction(action)
@@ -113,13 +139,13 @@ class WorkspaceControls(QtCore.QObject):
             display_action: QtGui.QAction = self.display_toolbar.addAction(name)
             display_action.setCheckable(True)
             display_action.setChecked(checkbox.isChecked())
-            display_action.setToolTip(f"Show or hide {name.lower()} in both panes")
+            display_action.setToolTip(f"Show or hide {name.lower()} in all panes")
             display_action.toggled.connect(checkbox.setChecked)
             checkbox.toggled.connect(display_action.setChecked)
             checkbox.hide()
             self.display_actions[name] = display_action
         navigator_action.setIconText("Navigator")
-        navigator_action.setToolTip("Show or hide the overview navigator in both panes")
+        navigator_action.setToolTip("Show or hide the overview navigator in all panes")
         self.display_toolbar.addAction(navigator_action)
         self.display_actions["Navigator"] = navigator_action
         annotations_action: QtGui.QAction = self.display_toolbar.addAction(
@@ -127,7 +153,7 @@ class WorkspaceControls(QtCore.QObject):
         )
         annotations_action.setCheckable(True)
         annotations_action.setChecked(True)
-        annotations_action.setToolTip("Show or hide annotations in both panes")
+        annotations_action.setToolTip("Show or hide annotations in all panes")
         annotations_action.toggled.connect(self.set_annotations_visible)
         self.display_actions["Annotations"] = annotations_action
         self.editors: dict[CentralGraphicsView, SelectionEditor] = {}
@@ -207,7 +233,7 @@ class WorkspaceControls(QtCore.QObject):
         """Select one workspace tool without discarding unfinished geometry.
 
         Args:
-            mode: Requested tool for both panes.
+            mode: Requested tool for all panes.
 
         Returns:
             Whether the requested tool became active.
@@ -262,6 +288,11 @@ class WorkspaceControls(QtCore.QObject):
         Args:
             view: Newly clicked pane.
         """
+        if (
+            self.widget.image_workspace is not None
+            and view is not self.widget._active_annotation_context()[1]
+        ):
+            return
         if self.mode is InteractionMode.SELECT:
             for pane, canvas in self.feedback.panes:
                 if pane.graphics_view is not view:
@@ -295,10 +326,16 @@ class WorkspaceControls(QtCore.QObject):
         Returns:
             Whether navigation can proceed safely.
         """
-        if not (view.line_points or view.polygon_points):
+        workspace = self.widget.image_workspace
+        if workspace is not None:
+            allowed: bool = workspace.can_switch()
+        else:
+            allowed = not (view.line_points or view.polygon_points)
+        if allowed:
             return True
-        self.feedback.notice = "Finish the shape with Enter, or cancel it with Esc, before changing or hiding its image."
-        self.refresh()
+        if workspace is None:
+            self.feedback.notice = "Finish the shape with Enter, or cancel it with Esc, before changing or hiding its image."
+            self.refresh()
         for pane, owner in self.feedback.panes:
             if owner is canvas and canvas.current_image_name:
                 # Picker handlers may select a new name after load_image returns.
@@ -326,9 +363,7 @@ class WorkspaceControls(QtCore.QObject):
         if self.switching or not hasattr(self, "save_indicator"):
             return
         for index, (pane, canvas) in enumerate(self.feedback.panes):
-            active: bool = (index == 1) == (
-                self.widget._last_active_view_name == "reference"
-            )
+            active: bool = pane.graphics_view is self.widget._active_annotation_context()[1]
             color: str = "#438ac7" if active else "palette(mid)"
             style: str = f"QFrame#{pane.objectName()} {{ border: 2px solid {color}; }}"
             if pane.styleSheet() != style:
@@ -406,11 +441,16 @@ class WorkspaceControls(QtCore.QObject):
         )
         instructions: dict[InteractionMode, str] = {
             InteractionMode.COUNT: "Count dots · click adds a point; Shift+drag selects points; Esc clears selection; C+drag pans; Z+drag zooms in; X+drag zooms out.",
-            InteractionMode.POINT: "Landmark · click either pane to place a point. Tool stays selected; Count dots returns to counting.",
-            InteractionMode.LINE: "Line · click vertices in either pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
-            InteractionMode.POLYGON: "Polygon · click vertices in either pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
+            InteractionMode.POINT: "Landmark · click any pane to place a point. Tool stays selected; Count dots returns to counting.",
+            InteractionMode.LINE: "Line · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
+            InteractionMode.POLYGON: "Polygon · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
             InteractionMode.SELECT: "Select/Edit · click dots or annotations; Shift+click toggles; Shift+drag selects; drag selected items to move; Delete removes; Esc clears.",
         }
+        if self.feedback.notice.startswith("Unfinished shape in ") and not any(
+            pane.graphics_view.line_points or pane.graphics_view.polygon_points
+            for pane, _canvas in self.feedback.panes
+        ):
+            self.feedback.notice = ""
         message: str = self.feedback.notice or instructions[self.mode]
         for pane, _canvas in self.feedback.panes:
             vertices: int = len(pane.graphics_view.line_points) + len(
