@@ -26,6 +26,7 @@ import os
 import json
 import glob
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any, Callable, TypeAlias, cast
 
 import numpy as np
@@ -33,6 +34,7 @@ import numpy as np
 from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .annotations.model import Point
 from .annotations import (
     Annotation,
     AnnotationShape,
@@ -120,6 +122,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.external_annotations: list[Annotation] = []
         self.external_annotation_document: LabelMeDocument | None = None
         self.external_annotation_items: list[QtWidgets.QGraphicsItem] = []
+        self.show_external_annotation_handles: bool = True
         self.external_annotation_handle_items: list[QtWidgets.QGraphicsItem] = []
         self.selected_annotation_indices: set[int] = set()
         self.selected_external_annotation_index: int | None = None
@@ -866,6 +869,8 @@ class Canvas(QtWidgets.QGraphicsScene):
     def _render_external_annotation_handles(self) -> None:
         """Render fixed-screen-size vertex handles for the selected annotation."""
         self._clear_external_annotation_handles()
+        if not self.show_external_annotation_handles:
+            return
         annotation_index: int | None = self.selected_external_annotation_index
         if annotation_index is None:
             return
@@ -1117,11 +1122,34 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.selected_external_annotation_index = annotation_index
         return self._persist_external_annotation_edit(annotation_index)
 
-    def _persist_external_annotation_edit(self, annotation_index: int) -> bool:
+    def replace_external_annotation_points(
+        self, annotation_index: int, points: list[Point]
+    ) -> bool:
+        """Save replacement vertices through the native annotation history.
+
+        Args:
+            annotation_index: Index of the selected annotation.
+            points: Valid source-pixel vertices proposed by the editor.
+
+        Returns:
+            Whether the replacement was saved.
+        """
+        if not 0 <= annotation_index < len(self.external_annotations):
+            return False
+        annotation: Annotation = self.external_annotations[annotation_index]
+        if annotation.locked or annotation.points == points:
+            return False
+        replacement: Annotation = replace(annotation, points=points)
+        return self._persist_external_annotation_edit(annotation_index, replacement)
+
+    def _persist_external_annotation_edit(
+        self, annotation_index: int, replacement: Annotation | None = None
+    ) -> bool:
         """Persist one in-memory annotation geometry edit with undo history.
 
         Args:
             annotation_index: Index in ``external_annotations``.
+            replacement: Geometry to save without mutating the in-memory shape.
 
         Returns:
             ``True`` when the edit was saved successfully.
@@ -1142,8 +1170,12 @@ class Canvas(QtWidgets.QGraphicsScene):
         before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
             image_path
         )
+        if replacement is not None and self._annotation_snapshot_unavailable(
+            before_snapshot
+        ):
+            return False
         try:
-            update_labelme_annotation(image_path, annotation)
+            update_labelme_annotation(image_path, replacement or annotation)
         except (
             OSError,
             json.JSONDecodeError,

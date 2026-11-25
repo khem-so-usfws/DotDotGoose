@@ -11,6 +11,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg.central_graphics_view import InteractionMode
 from ddg.main_window import MainWindow
+from ddg.shape_editor import ShapeTool
 from test_workspace_controls import window  # noqa: F401
 
 
@@ -24,6 +25,7 @@ def test_compare_split_button(window: MainWindow, qtbot: Any) -> None:
     controls: Any = window.workspace_controls
     widget: Any = window.centralWidget()
     button: QtWidgets.QToolButton = controls.compare_button
+    assert button.isVisible()
     assert button.isChecked()
     assert button.defaultAction() is window.compare_action
     assert button.text() == "Panes"
@@ -31,15 +33,69 @@ def test_compare_split_button(window: MainWindow, qtbot: Any) -> None:
     assert window.compare_2x1_action in button.menu().actions()
     window.compare_2x1_action.trigger()
     assert widget.compare_layout() == "2x1"
-    window.compare_action.trigger()
+    button.click()
     assert not widget.compare_enabled()
     assert not button.isChecked()
-    window.compare_action.trigger()
+    button.click()
     assert widget.compare_enabled()
     assert widget.compare_layout() == "2x1"
     assert window.compare_2x1_action.isChecked()
     widget.set_compare_layout("1x2")
     qtbot.wait(10)
+
+
+def test_panes_stays_visible_when_sidebar_controls_compact(
+    window: MainWindow, qtbot: Any
+) -> None:
+    """Keep the Panes split button usable when the sidebar controls collapse.
+
+    Args:
+        window: Visible application window.
+        qtbot: Qt interaction fixture.
+    """
+    widget: Any = window.centralWidget()
+    group: Any = widget.workspace_layout.groups[0]
+    button: QtWidgets.QToolButton = window.workspace_controls.compare_button
+
+    # Force the Panels group itself to compact regardless of the platform font.
+    window.left_sidebar_action.setIconText("Left sidebar " * 18)
+    window.right_sidebar_action.setIconText("Right sidebar " * 18)
+    window.resize(900, 850)
+    qtbot.waitUntil(lambda: group.compact)
+    assert group.selector.isVisible()
+    assert button.isVisible()
+    bounds: QtCore.QRect = QtCore.QRect(
+        button.mapTo(window, QtCore.QPoint()), button.size()
+    )
+    assert window.rect().contains(bounds)
+    assert group.selector.menu().actions() == [
+        window.left_sidebar_action,
+        window.right_sidebar_action,
+    ]
+
+    qtbot.mouseClick(
+        button,
+        QtCore.Qt.MouseButton.LeftButton,
+        pos=QtCore.QPoint(button.width() // 3, button.height() // 2),
+    )
+    assert not widget.compare_enabled()
+    button.click()
+    assert widget.compare_enabled()
+    menu: QtWidgets.QMenu = button.menu()
+    assert window.compare_1x2_action in menu.actions()
+
+    # Use the platform style's arrow hit area to open the real compact menu.
+    option: QtWidgets.QStyleOptionToolButton = QtWidgets.QStyleOptionToolButton()
+    button.initStyleOption(option)
+    arrow: QtCore.QRect = button.style().subControlRect(
+        QtWidgets.QStyle.ComplexControl.CC_ToolButton,
+        option,
+        QtWidgets.QStyle.SubControl.SC_ToolButtonMenu,
+        button,
+    )
+    menu.aboutToShow.connect(lambda: QtCore.QTimer.singleShot(0, menu.close))
+    with qtbot.waitSignal(menu.aboutToShow, timeout=1000):
+        qtbot.mouseClick(button, QtCore.Qt.MouseButton.LeftButton, pos=arrow.center())
 
 
 def test_batch_change_class_in_reference(window: MainWindow, qtbot: Any) -> None:
@@ -327,6 +383,7 @@ def test_vertex_drag_and_overlap_chooser(window: MainWindow, qtbot: Any) -> None
     window.workspace_controls.select_tool(InteractionMode.SELECT)
     midpoint: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(550, 400))
     qtbot.mouseClick(view.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=midpoint)
+    window.workspace_controls.shape_actions[ShapeTool.VERTICES].trigger()
     original: list[tuple[float, float]] = list(canvas.external_annotations[0].points)
     start: QtCore.QPoint = view.mapFromScene(QtCore.QPointF(*original[0]))
     end: QtCore.QPoint = start + QtCore.QPoint(20, 30)
@@ -342,6 +399,7 @@ def test_vertex_drag_and_overlap_chooser(window: MainWindow, qtbot: Any) -> None
     assert len(canvas.undo_queue) == history + 1
     widget.undo_global_history()
     assert canvas.external_annotations[0].points == original
+    window.workspace_controls.select_tool(InteractionMode.SELECT)
     editor: Any = window.workspace_controls.editors[view]
     editor.clear()
     canvas.add_point(QtCore.QPointF(550, 400))

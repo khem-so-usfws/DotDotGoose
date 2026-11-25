@@ -3,6 +3,16 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.9.1
+
+- Separate whole-item selection from editing a line or polygon's geometry.
+- Reshape cutlines and count-area boundaries with a replacement sketch and a
+  preview. Choose the area to retain when a polygon edit offers two results.
+- Trim or extend either end of a cutline, or move, insert, and delete vertices.
+- Add optional snapping and trace part of an existing cutline while drawing or
+  reshaping a count area. Find both controls near Edit Shape or in its menu.
+- Use the new tools in docked and floating panes with project-wide undo/redo.
+
 ## 1.9.0
 
 - Open up to four editable image panes in one project. Each has an independent

@@ -82,10 +82,7 @@ class EnhancementDialog(QtWidgets.QDialog):
 
     def apply(self) -> None:
         """Apply both values together to avoid repeated large-image redraws."""
-        if (
-            self.pane.graphics_view.line_points
-            or self.pane.graphics_view.polygon_points
-        ):
+        if self.pane.graphics_view.has_annotation_draft():
             self.owner.notice = (
                 "Finish (Enter) or cancel (Esc) the shape before enhancing."
             )
@@ -275,7 +272,7 @@ class WorkspaceFeedback(QtCore.QObject):
             values: Brightness and contrast values.
         """
         view: CentralGraphicsView = pane.graphics_view
-        if view.line_points or view.polygon_points:
+        if view.has_annotation_draft():
             self.notice = "Finish (Enter) or cancel (Esc) the shape before enhancing."
             self.refresh()
             return

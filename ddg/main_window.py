@@ -137,7 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         annotation_menu.setObjectName("Annotations")
         select_annotation_action: QtGui.QAction = annotation_menu.addAction(
-            self.tr("Select/Edit Dots and Annotations")
+            self.tr("Select Dots and Annotations")
         )
         select_annotation_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         select_annotation_action.triggered.connect(self.start_annotation_selection)
@@ -345,11 +345,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode == "select":
             self.statusBar().showMessage(
                 self.tr(
-                    "Annotation edit: drag a shape to move it; drag a vertex "
-                    "handle to reshape it; right-click a shape/vertex for insert "
-                    "or delete; locked annotations can be selected but not "
-                    "moved; C+drag pans; Z/X+drag zoom; Ctrl+Z/Ctrl+Y "
-                    "undo/redo; Esc clears selection; Count dots returns to counting."
+                    "Select: drag selected dots or annotations to move; "
+                    "Delete removes selected items. Use Edit Shape for "
+                    "reshaping and vertex edits."
                 )
             )
         elif mode == "point":
@@ -435,10 +433,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Landmark: one point per click\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
             "  Count region: click vertices, Enter/double-click to finish\n"
-            "  Select/Edit: click dots or annotations; Shift+click toggles selection\n"
+            "  Select: click dots or annotations; Shift+click toggles selection\n"
             "  Shift+drag selects enclosed items\n"
             "  Drag selected items to move; Delete removes; Esc clears selection\n"
-            "  Single selected annotations expose handles; right-click for vertex edits\n"
+            "  Edit Shape: Reshape, Trim/Extend, or Edit Vertices on one annotation\n"
+            "  Snap: optional point placement on vertices and edges\n"
+            "  Trace: join and leave a cutline while drawing or reshaping a polygon\n"
+            "  Enter applies a shape preview; Esc cancels its draft\n"
             "  C/Z/X navigation overrides also work while annotating\n"
             "  Ctrl+Z/Ctrl+Y: undo/redo edits chronologically across panes\n\n"
             "Count regions\n"

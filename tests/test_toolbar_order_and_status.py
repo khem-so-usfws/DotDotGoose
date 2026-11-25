@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg.central_graphics_view import InteractionMode
 from ddg.main_window import MainWindow
@@ -35,12 +35,21 @@ def test_toolbar_order_pipes_and_one_active_tool(
         InteractionMode.SELECT,
         InteractionMode.COUNT,
     ]
+    tool_actions: list[QtGui.QAction] = [controls.actions[mode] for mode in order]
     assert [button.defaultAction() for button in tools.buttons] == [
-        controls.actions[mode] for mode in order
+        *tool_actions[:-1],
+        controls.shape_default,
+        tool_actions[-1],
     ]
-    assert [action for action in tools.selector.menu().actions()] == [
-        controls.actions[mode] for mode in order
+    assert tools.selector.menu().actions() == [
+        *tool_actions[:-1],
+        controls.shape_menu.menuAction(),
+        tool_actions[-1],
     ]
+    snap, trace = tools.option_buttons
+    assert snap.isVisible() and trace.isVisible()
+    assert controls.shape_button.x() < snap.x() < trace.x() < tools.buttons[-1].x()
+    assert len(tools.inline_pipes) == 2
     assert len(tools.gaps) == 2
     for mode in order:
         controls.actions[mode].trigger()

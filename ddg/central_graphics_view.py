@@ -23,6 +23,7 @@
 #
 # --------------------------------------------------------------------------
 import os
+from collections.abc import Callable
 from enum import Enum
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -120,6 +121,8 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.alt: bool = False
         self.delay: int = 0
         self.annotation_target_blocked: bool = False
+        self.annotation_snap: Callable[[QtCore.QPointF], QtCore.QPointF] | None = None
+        self.shape_draft: Callable[[], bool] | None = None
         self.persistent_mode: InteractionMode | None = None
         self.interaction_mode: InteractionMode = InteractionMode.COUNT
         self.line_points: list[QtCore.QPointF] = []
@@ -345,6 +348,21 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         painter.setPen(QtGui.QPen(QtGui.QColor("yellow"), 2))
         painter.drawRect(extent)
         painter.end()
+
+    def has_annotation_draft(self) -> bool:
+        """Report an in-progress drawing or shape edit owned by this view."""
+        return bool(
+            self.line_points
+            or self.polygon_points
+            or (self.shape_draft is not None and self.shape_draft())
+        )
+
+    def _annotation_point(self, event: QtGui.QMouseEvent) -> QtCore.QPointF:
+        """Return the current sketch position, honoring optional snapping."""
+        point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
+        return (
+            self.annotation_snap(point) if self.annotation_snap is not None else point
+        )
 
     def cancel_annotation(self) -> None:
         """Cancel any annotation interaction and return to count mode."""
@@ -895,11 +913,11 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
             return
         if self.interaction_mode is InteractionMode.LINE:
-            self._update_line_preview(self.mapToScene(event.position().toPoint()))
+            self._update_line_preview(self._annotation_point(event))
             event.accept()
             return
         if self.interaction_mode is InteractionMode.POLYGON:
-            self._update_polygon_preview(self.mapToScene(event.position().toPoint()))
+            self._update_polygon_preview(self._annotation_point(event))
             event.accept()
             return
         QtWidgets.QGraphicsView.mouseMoveEvent(self, event)
@@ -992,12 +1010,12 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             return
         if self.interaction_mode is InteractionMode.LINE:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
-                self._add_line_vertex(self.mapToScene(event.position().toPoint()))
+                self._add_line_vertex(self._annotation_point(event))
                 event.accept()
             return
         if self.interaction_mode is InteractionMode.POLYGON:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
-                self._add_polygon_vertex(self.mapToScene(event.position().toPoint()))
+                self._add_polygon_vertex(self._annotation_point(event))
                 event.accept()
             return
 

@@ -1,6 +1,6 @@
 # Image panes and multi-monitor review
 
-DotDotGoose 1.9.0 supports up to four editable panes in one project. Pane 1
+DotDotGoose supports up to four editable panes in one project. Pane 1
 through Pane 4 have the same counting and annotation tools. Each independently
 displays a photo from the working folder.
 
@@ -65,7 +65,9 @@ counting class and counts. The main toolbar controls the selected tool and the
 visibility of dots, grid, navigator, and annotations across panes. The toolbar
 and pane headers move secondary actions into menus when space is limited.
 
-Choose **Select/Edit** to edit dots and annotations in any open pane.
+Choose **Select** to move or delete whole dots and annotations in any open pane.
+Use the main toolbar’s **Edit Shape** tools to reshape or edit vertices on one
+line or polygon in the active pane, including a floating pane.
 
 | Gesture or action | Result |
 | --- | --- |

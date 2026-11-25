@@ -70,14 +70,13 @@ def apply_selection_state(canvas: Canvas, event: HistoryEvent, index: int) -> bo
 
 @dataclass
 class Target:
-    """A screen-distance hit on a dot, annotation, or selected vertex."""
+    """A screen-distance hit on a dot or annotation."""
 
     kind: str
     distance: float
     annotation: int = -1
     class_name: str = ""
     point: QtCore.QPointF | None = None
-    vertex: int = -1
 
 
 class SelectionEditor(QtCore.QObject):
@@ -107,7 +106,6 @@ class SelectionEditor(QtCore.QObject):
         self.start: QtCore.QPoint = QtCore.QPoint()
         self.source_start: QtCore.QPointF = QtCore.QPointF()
         self.drag_rect: QtCore.QRect = QtCore.QRect()
-        self.target: Target | None = None
         self.rubber: QtWidgets.QRubberBand = QtWidgets.QRubberBand(
             QtWidgets.QRubberBand.Shape.Rectangle, view.viewport()
         )
@@ -279,7 +277,7 @@ class SelectionEditor(QtCore.QObject):
         self.controls.refresh()
 
     def clear(self) -> None:
-        """Clear dots and annotations while retaining Select/Edit."""
+        """Clear dots and annotations while retaining Select."""
         self.cancel_gesture()
         self.canvas.selection = []
         self.canvas.clear_external_annotation_selection()
@@ -290,7 +288,6 @@ class SelectionEditor(QtCore.QObject):
     def cancel_gesture(self) -> None:
         """Discard the visual drag preview; committed geometry is unchanged."""
         self.gesture = ""
-        self.target = None
         self.rubber.hide()
 
     @staticmethod
@@ -333,7 +330,7 @@ class SelectionEditor(QtCore.QObject):
             position: Viewport cursor position.
 
         Returns:
-            Candidates ordered by distance and dot/vertex preference.
+            Candidates ordered by distance and dot preference.
         """
         cursor: QtCore.QPointF = QtCore.QPointF(position)
         result: list[Target] = []
@@ -375,20 +372,7 @@ class SelectionEditor(QtCore.QObject):
                     distance = min(distance, 20.0)
             if distance <= 8 or inside:
                 result.append(Target("annotation", distance, annotation=index))
-            if (
-                self.canvas.selected_annotation_indices == {index}
-                and not self.canvas.selection
-                and not annotation.locked
-            ):
-                for vertex, point in enumerate(points):
-                    distance = QtCore.QLineF(cursor, point).length()
-                    if distance <= 8:
-                        result.append(
-                            Target("vertex", distance, annotation=index, vertex=vertex)
-                        )
-        result.sort(
-            key=lambda hit: (hit.distance, 0 if hit.kind in {"dot", "vertex"} else 1)
-        )
+        result.sort(key=lambda hit: (hit.distance, hit.kind != "dot"))
         return result
 
     def choose(self, position: QtCore.QPoint) -> Target | None:
@@ -483,6 +467,8 @@ class SelectionEditor(QtCore.QObject):
             event: Left-button press.
         """
         self.view.view_activated.emit()
+        if self.view.annotation_target_blocked:
+            return
         self.cancel_gesture()
         self.start = event.position().toPoint()
         self.source_start = self.view.mapToScene(self.start)
@@ -504,8 +490,7 @@ class SelectionEditor(QtCore.QObject):
             self.clear()
             self.toggle(target)
         elif self.editable():
-            self.target = target
-            self.gesture = "vertex" if target.kind == "vertex" else "move"
+            self.gesture = "move"
             bounds: QtCore.QRectF = QtCore.QRectF()
             for point in self.selected_positions():
                 pixel: QtCore.QPoint = self.view.mapFromScene(point)
@@ -513,13 +498,7 @@ class SelectionEditor(QtCore.QObject):
                     pixel.x() - 6, pixel.y() - 6, 12, 12
                 )
                 bounds = bounds.united(rect)
-            self.drag_rect = (
-                bounds.toAlignedRect()
-                if self.gesture == "move"
-                else QtCore.QRect(
-                    self.start - QtCore.QPoint(6, 6), QtCore.QSize(12, 12)
-                )
-            )
+            self.drag_rect = bounds.toAlignedRect()
         event.accept()
 
     def selected_positions(self) -> list[QtCore.QPointF]:
@@ -567,10 +546,7 @@ class SelectionEditor(QtCore.QObject):
                 if target is not None:
                     self.toggle(target)
         elif self.gesture and dragged:
-            self.edit(
-                offset=self.view.mapToScene(position) - self.source_start,
-                vertex=self.target if self.gesture == "vertex" else None,
-            )
+            self.edit(offset=self.view.mapToScene(position) - self.source_start)
         self.cancel_gesture()
         event.accept()
 
@@ -612,14 +588,12 @@ class SelectionEditor(QtCore.QObject):
         self,
         offset: QtCore.QPointF | None = None,
         delete: bool = False,
-        vertex: Target | None = None,
     ) -> bool:
         """Commit a single atomic, undoable dot/annotation group change.
 
         Args:
             offset: Source-pixel translation, or no translation for deletion.
             delete: Whether to remove selected items.
-            vertex: Optional single vertex to move instead of the whole group.
 
         Returns:
             Whether the operation committed successfully.
@@ -635,7 +609,7 @@ class SelectionEditor(QtCore.QObject):
             Path(self.canvas.directory) / (self.canvas.current_image_name or "")
         )
         annotation_edit: bool = bool(self.canvas.selected_annotation_indices)
-        point_edit: bool = bool(self.canvas.selection) and vertex is None
+        point_edit: bool = bool(self.canvas.selection)
         snapshot: dict[str, Any] | None = (
             self.canvas._annotation_history_snapshot(image_path)
             if annotation_edit
@@ -685,24 +659,10 @@ class SelectionEditor(QtCore.QObject):
                     return False
                 source_indices.add(source)
                 if not delete:
+                    delta: QtCore.QPointF = offset or QtCore.QPointF()
                     shapes[source]["points"] = [
-                        [
-                            x
-                            + (
-                                offset.x()
-                                if offset is not None
-                                and (vertex is None or number == vertex.vertex)
-                                else 0
-                            ),
-                            y
-                            + (
-                                offset.y()
-                                if offset is not None
-                                and (vertex is None or number == vertex.vertex)
-                                else 0
-                            ),
-                        ]
-                        for number, (x, y) in enumerate(shapes[source]["points"])
+                        [x + delta.x(), y + delta.y()]
+                        for x, y in shapes[source]["points"]
                     ]
             if delete:
                 after.annotations["shapes"] = [
@@ -784,12 +744,14 @@ class SelectionEditor(QtCore.QObject):
             self.edit(offset=QtCore.QPointF(x, y))
 
     def context_menu(self, event: QtGui.QContextMenuEvent) -> None:
-        """Expose selection actions and retain vertex editing for a single shape.
+        """Expose whole-item actions for the clicked selection.
 
         Args:
             event: Requested context-menu position.
         """
         self.view.view_activated.emit()
+        if self.view.annotation_target_blocked:
+            return
         hit: Target | None = self.choose(event.pos())
         if hit is not None and not self.is_selected(hit):
             self.clear()
@@ -797,33 +759,4 @@ class SelectionEditor(QtCore.QObject):
         if not (self.canvas.selection or self.canvas.selected_annotation_indices):
             return
         self.update_menu()
-        vertex_action: QtGui.QAction | None = None
-        insert_action: QtGui.QAction | None = None
-        if (
-            hit is not None
-            and hit.kind != "dot"
-            and len(self.canvas.selected_annotation_indices) == 1
-        ):
-            annotation: Annotation = self.canvas.external_annotations[hit.annotation]
-            if (
-                not annotation.locked
-                and annotation.shape_type is not AnnotationShape.POINT
-            ):
-                if hit.kind == "vertex":
-                    vertex_action = self.menu.addAction("Delete vertex")
-                else:
-                    insert_action = self.menu.addAction("Insert vertex here")
-        action: QtGui.QAction | None = self.menu.exec(event.globalPos())
-        if action is not None and hit is not None:
-            if action is vertex_action:
-                self.view.external_annotation_delete_vertex_requested.emit(
-                    hit.annotation, hit.vertex
-                )
-            elif action is insert_action:
-                self.view.external_annotation_insert_vertex_requested.emit(
-                    hit.annotation, self.view.mapToScene(event.pos())
-                )
-        for temporary in (vertex_action, insert_action):
-            if temporary is not None:
-                self.menu.removeAction(temporary)
-                temporary.deleteLater()
+        self.menu.exec(event.globalPos())

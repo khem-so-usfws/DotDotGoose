@@ -24,7 +24,7 @@
 # --------------------------------------------------------------------------
 import os
 import sys
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from PyQt6 import QtCore, QtGui, QtWidgets, uic
 
@@ -39,6 +39,10 @@ from ddg.compare_pane import ComparePane
 from ddg.image_workspace import ImageWorkspace
 from ddg.workspace_feedback import WorkspaceFeedback
 from ddg.responsive_workspace import ResponsiveWorkspace
+
+if TYPE_CHECKING:
+    from ddg.shape_editor import ShapeEditor
+    from ddg.workspace_controls import WorkspaceControls
 
 # from .ui_central_widget import Ui_central as CLASS_DIALOG
 if getattr(sys, 'frozen', False):
@@ -668,7 +672,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if hasattr(self, "workspace_layout"):
             self.workspace_layout.bind_active()
         if hasattr(self, "workspace_feedback"):
-            self.workspace_feedback.refresh()
+            controls: WorkspaceControls | None = self.workspace_feedback.controls
+            if controls is not None:
+                controls.activate(self._active_annotation_context()[1])
+            else:
+                self.workspace_feedback.refresh()
         return True
 
     def _active_annotation_context(self) -> tuple[Canvas, CentralGraphicsView]:
@@ -738,6 +746,12 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     def undo_global_history(self) -> None:
         """Undo the most recent edit regardless of which pane created it."""
+        controls: WorkspaceControls | None = self.workspace_feedback.controls
+        if controls is not None and controls.active_shape_editor().has_draft():
+            controls.active_shape_editor().notice(
+                "Apply the edit or press Esc before using Undo."
+            )
+            return
         if not self._global_undo_order:
             return
         canvas: Canvas = self._global_undo_order.pop()
@@ -747,6 +761,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self._global_redo_order.append(canvas)
             if self.image_workspace is not None and canvas.redo_queue:
                 self.image_workspace.refresh_shared_edit(canvas, canvas.redo_queue[-1])
+            if controls is not None:
+                editor: ShapeEditor = controls.active_shape_editor()
+                editor.vertices.clear()
+                editor.redraw()
+                controls.refresh()
             return
         # A failed persistence operation leaves the local event untouched. Keep
         # the same event at the top globally rather than skipping to older work.
@@ -754,6 +773,12 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
 
     def redo_global_history(self) -> None:
         """Redo the most recently undone edit regardless of pane."""
+        controls: WorkspaceControls | None = self.workspace_feedback.controls
+        if controls is not None and controls.active_shape_editor().has_draft():
+            controls.active_shape_editor().notice(
+                "Apply the edit or press Esc before using Redo."
+            )
+            return
         if not self._global_redo_order:
             return
         canvas: Canvas = self._global_redo_order.pop()
@@ -763,6 +788,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self._global_undo_order.append(canvas)
             if self.image_workspace is not None and canvas.undo_queue:
                 self.image_workspace.refresh_shared_edit(canvas, canvas.undo_queue[-1])
+            if controls is not None:
+                editor: ShapeEditor = controls.active_shape_editor()
+                editor.vertices.clear()
+                editor.redraw()
+                controls.refresh()
             return
         # Match undo failure semantics: preserve chronology and stop here.
         self._global_redo_order.append(canvas)

@@ -4,7 +4,7 @@ DotDotGoose is a free, open source tool for manually counting objects in images.
 This fork extends upstream DotDotGoose 1.7.1 with native annotations, up to four dockable
 image panes, and shared counting and editing tools.
 
-Current fork version **1.9.0**.
+Current fork version **1.9.1**.
 
 Count points and annotations retain original-image pixel coordinates, making
 them suitable for review, analysis, and future computer-assisted counting.
@@ -16,7 +16,7 @@ Download the Windows x64 ZIP from this fork's
 Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
 folder. Keep the bundled runtime files alongside the executable.
 
-The 1.9.0 package is named `DotDotGoose-1.9.0-windows-x64.zip`. Python and Conda
+The 1.9.1 package is named `DotDotGoose-1.9.1-windows-x64.zip`. Python and Conda
 are required only when running from source or building a release.
 
 ## Counting and image panes
@@ -63,7 +63,7 @@ counting. See the [Panes guide](docs/compare_pane.md) for the full workflow.
 C, Z, and X also work while drawing or editing annotations. Choose **Count dots**
 to return to counting after using another tool.
 
-## Native annotations and Select/Edit
+## Native annotations and shape editing
 
 Use **Landmark**, **Line**, or **Polygon** to mark reference points, cutlines, and
 count regions directly in any open pane. The first click activates that pane and
@@ -71,7 +71,7 @@ starts the shape. Drawing tools stay selected after a shape is completed.
 Finish an unfinished shape with Enter, or cancel it with Esc, before changing
 tools or images or starting a shape in the other pane.
 
-Choose **Select/Edit** to work with count dots and annotations together.
+Choose **Select** to work with count dots and annotations together.
 
 | Input | Action |
 | --- | --- |
@@ -79,7 +79,6 @@ Choose **Select/Edit** to work with count dots and annotations together.
 | Shift+click | Add or remove an item from the selection |
 | Shift+drag | Add visible items fully enclosed by the selection rectangle |
 | Drag an already selected item | Move the selected group |
-| Drag a selected annotation's vertex handle | Move that vertex |
 | Change class… in the selection or right-click menu | Reclassify the selected dots |
 | Delete / Backspace | Delete selected items |
 | Esc or click empty space | Clear the selection |
@@ -90,13 +89,28 @@ containing a locked annotation must be unlocked or adjusted before moving or
 deleting it. An overlap menu helps choose between nearby items.
 
 The pane's selection menu offers **Move by pixel offset**, Delete, and Clear
-selection. A single selected annotation also supports properties and right-click
-vertex insertion/deletion. Annotation properties include labels, symbology, and
-locking.
+selection. Annotation properties include labels, symbology, and locking.
 
-In any pane, **Change class…** works in Count dots and Select/Edit. Choose an
+In any pane, **Change class…** works in Count dots and Select. Choose an
 existing class and click **Apply**. Counts and dot colors update together, and
 the dots stay selected. The entire change is undoable in one step.
+
+Select one visible, unlocked line or polygon and open **Edit Shape** to change
+its geometry:
+
+- **Reshape** redraws a stretch between two crossings or snapped joins. When
+  two polygon previews appear, click the area you want to keep.
+- **Trim/Extend** changes one line end. Click the endpoint first, then click a
+  new stop on the line or sketch outward to extend it.
+- **Edit Vertices** lets you drag vertices, click an edge to insert one, and
+  Shift+click to select multiple vertices for deletion.
+- **Snap** is off when the app starts. Turn it on to attach clicks to nearby
+  vertices or edges. **Trace** follows a cutline between two clicked locations
+  while drawing or reshaping a count area in the same image.
+
+Press **Enter** to apply a reshape or line-end preview as one undoable edit.
+Press **Esc** to cancel. Reshape stays active after applying. At narrow widths,
+Snap and Trace are accessible through the **Edit Shape** menu.
 
 Count-region polygons can dim the area outside a region, highlight outside
 points, and support QA review. Standard point totals and exports include all
@@ -123,7 +137,7 @@ The main toolbar has three groups separated by pipe dividers.
 | --- | --- |
 | Panels | Left sidebar, Right sidebar, Panes |
 | Display | Dots, Grid, Navigator, Annotations |
-| Tools | Landmark, Line, Polygon, Select/Edit, Count dots, Class |
+| Tools | Landmark, Line, Polygon, Select, Edit Shape, Snap, Trace, Count dots, Class |
 
 Tools share one active mode across all panes. The selected class appears beside
 Count dots, or beside the active-tool selector when the toolbar is compact.
@@ -216,8 +230,8 @@ The script runs the tests, builds the application using `DotDotGoose.spec`, adds
 the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.9.0-windows-x64\DotDotGoose.exe
-dist\DotDotGoose-1.9.0-windows-x64.zip
+dist\DotDotGoose-1.9.1-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.9.1-windows-x64.zip
 ```
 
 The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
@@ -235,8 +249,8 @@ folder, add the documentation, and create the ZIP.
 Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-set "DDG_STAGE=%TEMP%\ddg-1.9.0-release-%RANDOM%"
-set "DDG_PACKAGE=DotDotGoose-1.9.0-windows-x64"
+set "DDG_STAGE=%TEMP%\ddg-1.9.1-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.9.1-windows-x64"
 
 powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
 
@@ -253,18 +267,18 @@ annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
 Windows machine without Python or Conda when testing the packaged application.
 
 For each new release, commit the final source, push the release branch, and
-create an annotated version tag. The example below uses `main` and `v1.9.0`.
+create an annotated version tag. The example below uses `main` and `v1.9.1`.
 Use a new version for a release following an already published tag.
 
 ```bat
 git push origin main
-git tag -a v1.9.0 -m "DotDotGoose 1.9.0"
-git push origin refs/tags/v1.9.0
+git tag -a v1.9.1 -m "DotDotGoose 1.9.1"
+git push origin refs/tags/v1.9.1
 ```
 
 Create a release from that tag on the
 [GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
-add release notes, and attach `DotDotGoose-1.9.0-windows-x64.zip`. The attached
+add release notes, and attach `DotDotGoose-1.9.1-windows-x64.zip`. The attached
 Windows ZIP contains the executable and runtime files. GitHub's automatic
 source archives contain the source code.
 

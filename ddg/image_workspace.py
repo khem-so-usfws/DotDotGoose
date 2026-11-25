@@ -230,7 +230,7 @@ class ImageWorkspace(QtCore.QObject):
         """
         for name, (pane, _canvas) in self.widget.image_panes.items():
             view: CentralGraphicsView = pane.graphics_view
-            if name != target and (view.line_points or view.polygon_points):
+            if name != target and view.has_annotation_draft():
                 feedback = self.widget.workspace_feedback
                 feedback.notice = (
                     f"Unfinished shape in {pane.label.text()}. "

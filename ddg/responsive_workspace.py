@@ -93,6 +93,9 @@ class ToolbarGroup(QtWidgets.QWidget):
         actions: list[QtGui.QAction],
         special: QtWidgets.QToolButton | None = None,
         subgroup_breaks: dict[QtGui.QAction, int] | None = None,
+        special_before: QtGui.QAction | None = None,
+        special_options: tuple[QtGui.QAction, ...] = (),
+        keep_special_visible: bool = False,
     ) -> None:
         """Build presentations without hiding shared menu/shortcut actions.
 
@@ -100,11 +103,23 @@ class ToolbarGroup(QtWidgets.QWidget):
             title: Group label and compact-menu text.
             bar: Target toolbar.
             actions: Existing application actions.
-            special: Optional Compare split button to preserve.
+            special: Optional split button to preserve.
             subgroup_breaks: Extra space before selected tool actions.
+            special_before: Action that follows the split button when inline.
+            special_options: Actions that fit inline or move into the split menu.
+            keep_special_visible: Keep the split button beside the compact selector.
         """
         super().__init__(bar)
         self.buttons: list[QtWidgets.QToolButton] = []
+        self.option_buttons: list[QtWidgets.QToolButton] = []
+        self.inline_pipes: list[QtWidgets.QLabel] = []
+        self.special: QtWidgets.QToolButton | None = special
+        self.always_visible_button: QtWidgets.QToolButton | None = (
+            special if keep_special_visible else None
+        )
+        self.special_options: tuple[QtGui.QAction, ...] = special_options
+        self.options_in_menu: bool = False
+        self.option_separator: QtGui.QAction | None = None
         self.compact: bool = False
         self.class_label: QtWidgets.QLabel | None = None
         self.class_slot: int = 1
@@ -112,7 +127,10 @@ class ToolbarGroup(QtWidgets.QWidget):
         row: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(2)
+        menu: QtWidgets.QMenu = QtWidgets.QMenu(self)
         for action in actions:
+            if action is special_before and special is not None:
+                self.attach_special(row, menu, special)
             if subgroup_breaks and action in subgroup_breaks:
                 width: int = subgroup_breaks[action]
                 gap: QtWidgets.QSpacerItem = QtWidgets.QSpacerItem(
@@ -130,10 +148,9 @@ class ToolbarGroup(QtWidgets.QWidget):
             button.setDefaultAction(action)
             row.addWidget(button)
             self.buttons.append(button)
-        if special is not None:
-            row.addWidget(special)
-            special.show()
-            self.buttons.append(special)
+            menu.addAction(action)
+        if special is not None and special_before is None:
+            self.attach_special(row, menu, special)
         self.selector: QtWidgets.QToolButton = QtWidgets.QToolButton(self)
         self.selector.setText(title)
         self.selector.setToolButtonStyle(
@@ -143,30 +160,96 @@ class ToolbarGroup(QtWidgets.QWidget):
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
         )
         self.selector.setToolTip(f"{title}: open all controls in this group")
-        menu: QtWidgets.QMenu = QtWidgets.QMenu(self.selector)
-        menu.addActions(actions)
-        if special is not None:
-            menu.addAction(special.defaultAction())
-            menu.addMenu(special.menu())
         self.selector.setMenu(menu)
-        row.addWidget(self.selector)
+        if self.always_visible_button is None:
+            row.addWidget(self.selector)
+        else:
+            row.insertWidget(row.indexOf(self.always_visible_button), self.selector)
         self.selector.hide()
         bar.addWidget(self)
 
-    def natural_width(self) -> int:
-        """Return the width of all expanded controls, even when hidden."""
+    def attach_special(
+        self,
+        row: QtWidgets.QHBoxLayout,
+        menu: QtWidgets.QMenu,
+        special: QtWidgets.QToolButton,
+    ) -> None:
+        """Place a split tool and any options in the expanded group row."""
+        if self.special_options:
+            self.add_inline_pipe(row)
+        row.addWidget(special)
+        self.buttons.append(special)
+        submenu: QtWidgets.QMenu = special.menu()
+        if special is not self.always_visible_button:
+            if not self.special_options:
+                menu.addAction(special.defaultAction())
+            menu.addMenu(submenu)
+        if self.special_options:
+            self.option_separator = submenu.addSeparator()
+            self.option_separator.setVisible(False)
+        for action in self.special_options:
+            button: QtWidgets.QToolButton = QtWidgets.QToolButton(self)
+            button.setDefaultAction(action)
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+            button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            row.addWidget(button)
+            self.option_buttons.append(button)
+        if self.special_options:
+            self.add_inline_pipe(row)
+
+    def add_inline_pipe(self, row: QtWidgets.QHBoxLayout) -> None:
+        """Visually separate geometry tools from selection and counting."""
+        pipe: QtWidgets.QLabel = QtWidgets.QLabel("|", self)
+        pipe.setMargin(2)
+        pipe.setForegroundRole(QtGui.QPalette.ColorRole.Mid)
+        pipe.setAccessibleName("Toolbar group separator")
+        self.inline_pipes.append(pipe)
+        row.addWidget(pipe)
+
+    def set_options_in_menu(self, in_menu: bool) -> None:
+        """Move optional inline controls into the split tool's menu."""
+        if in_menu == self.options_in_menu or self.special is None:
+            return
+        self.options_in_menu = in_menu
+        submenu: QtWidgets.QMenu = self.special.menu()
+        for button, action in zip(self.option_buttons, self.special_options):
+            button.setVisible(not self.compact and not in_menu)
+            if in_menu:
+                submenu.addAction(action)
+            else:
+                submenu.removeAction(action)
+        if self.option_separator is not None:
+            self.option_separator.setVisible(in_menu)
+        self.updateGeometry()
+
+    def natural_width(self, inline_options: bool = True) -> int:
+        """Return the width of the expanded group with optional inline tools."""
+        buttons: list[QtWidgets.QToolButton] = self.buttons + (
+            self.option_buttons if inline_options else []
+        )
         return (
-            sum(button.sizeHint().width() for button in self.buttons)
-            + 2 * max(0, len(self.buttons) - 1)
+            sum(
+                max(button.minimumWidth(), button.sizeHint().width())
+                for button in buttons
+            )
+            + 2 * max(0, len(buttons) - 1)
             + 12
             + sum(width for _gap, width in self.gaps)
+            + sum(pipe.sizeHint().width() + 2 for pipe in self.inline_pipes)
             + (self.class_label.width() + 2 if self.class_label is not None else 0)
         )
 
     def compact_width(self) -> int:
-        """Return the compact selector width including toolbar margins."""
+        """Return the compact selector width and any button kept beside it."""
+        button: QtWidgets.QToolButton | None = self.always_visible_button
+        button_width: int = (
+            max(button.minimumWidth(), button.sizeHint().width()) + 2
+            if button is not None
+            else 0
+        )
         return (
             self.selector.sizeHint().width()
+            + button_width
             + 12
             + (self.class_label.width() + 2 if self.class_label is not None else 0)
         )
@@ -181,7 +264,11 @@ class ToolbarGroup(QtWidgets.QWidget):
             return
         self.compact = compact
         for button in self.buttons:
-            button.setVisible(not compact)
+            button.setVisible(not compact or button is self.always_visible_button)
+        for button in self.option_buttons:
+            button.setVisible(not compact and not self.options_in_menu)
+        for pipe in self.inline_pipes:
+            pipe.setVisible(not compact)
         self.selector.setVisible(compact)
         if self.class_label is not None:
             row: QtWidgets.QHBoxLayout = cast(QtWidgets.QHBoxLayout, self.layout())
@@ -674,6 +761,7 @@ class ResponsiveWorkspace(QtCore.QObject):
             panels,
             [window.left_sidebar_action, window.right_sidebar_action],
             controls.compare_button,
+            keep_special_visible=True,
         )
         # Keep the visible state distinct even with a flat native toolbar style.
         for button in panels_group.buttons:
@@ -683,6 +771,15 @@ class ResponsiveWorkspace(QtCore.QObject):
                 "border: 1px inset palette(mid); }"
             )
         controls.compare_button.menu().setTitle("Panes layout")
+        shape_button: QtWidgets.QToolButton = controls.shape_button
+        shape_button.setMinimumWidth(
+            shape_button.sizeHint().width()
+            + max(
+                0,
+                shape_button.fontMetrics().horizontalAdvance("Edit Vertices")
+                - shape_button.fontMetrics().horizontalAdvance("Edit Shape"),
+            )
+        )
         tools_group: ToolbarGroup = ToolbarGroup(
             "Tools",
             controls.tools_toolbar,
@@ -696,10 +793,13 @@ class ResponsiveWorkspace(QtCore.QObject):
                     InteractionMode.COUNT,
                 )
             ],
+            special=shape_button,
             subgroup_breaks={
                 controls.actions[InteractionMode.SELECT]: 8,
                 controls.actions[InteractionMode.COUNT]: 6,
             },
+            special_before=controls.actions[InteractionMode.COUNT],
+            special_options=(controls.snap_action, controls.trace_action),
         )
         tools_group.selector.setCheckable(True)
         tools_group.selector.setChecked(True)
@@ -787,6 +887,8 @@ class ResponsiveWorkspace(QtCore.QObject):
         self.widget.labelWorkingDirectory.setToolTip(directory)
         if self.groups and self.controls is not None:
             action: QtGui.QAction = self.controls.actions[self.controls.mode]
+            if self.controls.active_shape_editor().tool is not None:
+                action = self.controls.shape_default
             if self.groups[1].selector.text() != action.iconText():
                 self.groups[1].selector.setText(action.iconText())
                 self.schedule()
@@ -864,11 +966,15 @@ class ResponsiveWorkspace(QtCore.QObject):
         pipes_width: int = sum(pipe.sizeHint().width() for pipe in self.toolbar_pipes)
         available: int = self.window.width() - 40 - pipes_width
         compact: list[bool] = [False, False, False]
+        options_in_menu: bool = sum(widths) > available
+        if options_in_menu:
+            widths[1] = self.groups[1].natural_width(inline_options=False)
         for index in (1, 2, 0):
             if sum(widths) <= available:
                 break
             compact[index] = True
             widths[index] = self.groups[index].compact_width()
+        self.groups[1].set_options_in_menu(options_in_menu)
         for index, group in enumerate(self.groups):
             group.set_compact(compact[index])
         minimum: int = (

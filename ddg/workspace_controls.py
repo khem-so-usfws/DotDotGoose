@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .annotations import Annotation, AnnotationShape
 from .canvas import Canvas
 from .central_graphics_view import CentralGraphicsView, InteractionMode
 from .workspace_feedback import WorkspaceFeedback
 from .selection_editor import SelectionEditor
+from .shape_editor import ShapeEditor, ShapeTool
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -84,8 +86,6 @@ class WorkspaceControls(QtCore.QObject):
                 )
             reopen.aboutToShow.connect(lambda: workspace.update_reopen_menu(reopen))
         self.compare_button.setMenu(compare_menu)
-        panels.addWidget(self.compare_button)
-        panels.addSeparator()
         self.tools_toolbar: QtWidgets.QToolBar = self.toolbar("Tools", "toolsToolbar")
         self.tool_group: QtGui.QActionGroup = QtGui.QActionGroup(self)
         self.tool_group.setExclusive(True)
@@ -108,8 +108,8 @@ class WorkspaceControls(QtCore.QObject):
                 "Draw count regions in any pane; Enter finishes, Esc cancels the draft",
             ),
             InteractionMode.SELECT: (
-                "Select/Edit",
-                "Select and edit dots or annotations in any pane; Esc clears selection",
+                "Select",
+                "Select, move, or delete whole dots and annotations; Esc clears selection",
             ),
         }
         for mode, (label, tooltip) in descriptions.items():
@@ -127,6 +127,46 @@ class WorkspaceControls(QtCore.QObject):
             self.tool_group.addAction(action)
             self.tools_toolbar.addAction(action)
             self.actions[mode] = action
+        self.last_shape_tool: ShapeTool = ShapeTool.RESHAPE
+        self.shape_default: QtGui.QAction = QtGui.QAction("Edit Shape", window)
+        self.shape_default.setCheckable(True)
+        self.shape_default.triggered.connect(self.resume_shape_tool)
+        self.shape_button: QtWidgets.QToolButton = QtWidgets.QToolButton(
+            self.tools_toolbar
+        )
+        self.shape_button.setObjectName("editShapeButton")
+        self.shape_button.setDefaultAction(self.shape_default)
+        self.shape_button.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
+        self.shape_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.shape_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.shape_menu: QtWidgets.QMenu = QtWidgets.QMenu(
+            "Edit Shape", self.shape_button
+        )
+        self.shape_button.setMenu(self.shape_menu)
+        self.shape_actions: dict[ShapeTool, QtGui.QAction] = {}
+        for tool in ShapeTool:
+            shape_action: QtGui.QAction = self.shape_menu.addAction(tool.value)
+            shape_action.setCheckable(True)
+            shape_action.triggered.connect(
+                lambda _checked=False, selected=tool: self.start_shape_tool(selected)
+            )
+            self.shape_actions[tool] = shape_action
+        self.snap_action: QtGui.QAction = QtGui.QAction("Snap", window)
+        self.snap_action.setCheckable(True)
+        self.snap_action.setToolTip(
+            "Snap sketch clicks to nearby annotation vertices or edges"
+        )
+        self.snap_action.triggered.connect(self.resume_image_focus)
+        self.trace_action: QtGui.QAction = QtGui.QAction("Trace", window)
+        self.trace_action.setCheckable(True)
+        self.trace_action.setToolTip(
+            "Follow part of a cutline while drawing or reshaping a count area"
+        )
+        self.trace_action.triggered.connect(self.trace)
         self.tools_toolbar.addSeparator()
         self.display_toolbar: QtWidgets.QToolBar = self.toolbar(
             "Display", "displayToolbar"
@@ -157,6 +197,7 @@ class WorkspaceControls(QtCore.QObject):
         annotations_action.toggled.connect(self.set_annotations_visible)
         self.display_actions["Annotations"] = annotations_action
         self.editors: dict[CentralGraphicsView, SelectionEditor] = {}
+        self.shape_editors: dict[CentralGraphicsView, ShapeEditor] = {}
         self.dot_menus: list[QtWidgets.QMenu] = []
         self.annotation_menus: list[QtWidgets.QMenu] = []
         for index, (pane, canvas) in enumerate(self.feedback.panes):
@@ -165,7 +206,6 @@ class WorkspaceControls(QtCore.QObject):
             canvas.image_change_allowed = lambda p=pane, c=canvas: self.can_leave_image(
                 p.graphics_view, c
             )
-            view.view_activated.connect(lambda v=view: self.activate(v))
             view.annotation_cancel_requested.connect(
                 lambda c=canvas: self.feedback.clear_selection(c)
             )
@@ -187,6 +227,8 @@ class WorkspaceControls(QtCore.QObject):
             )
             self.annotation_menus.append(menu)
             self.editors[view] = SelectionEditor(self, view, canvas, button.menu())
+            canvas.show_external_annotation_handles = False
+            self.shape_editors[view] = ShapeEditor(self, view, canvas)
         self.save_indicator: QtWidgets.QLabel = self.feedback.save_label
         self.save_indicator.setFixedWidth(
             self.save_indicator.fontMetrics().horizontalAdvance("Unsaved changes") + 24
@@ -229,6 +271,95 @@ class WorkspaceControls(QtCore.QObject):
             canvas.set_annotations_visible(visible)
         self.refresh()
 
+    def active_shape_editor(self) -> ShapeEditor:
+        """Resolve the last clicked pane even when a toolbar menu has focus."""
+        return self.shape_editors[self.widget._active_annotation_context()[1]]
+
+    def resume_image_focus(self) -> None:
+        """Send sketch keystrokes back to the pane owning the edit."""
+        view: CentralGraphicsView = self.active_shape_editor().view
+        view.window().activateWindow()
+        view.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def resume_shape_tool(self) -> None:
+        """Start the last eligible tool or show options for a new sketch."""
+        editor: ShapeEditor = self.active_shape_editor()
+        target: tuple[int, Annotation] | None = editor.target()
+        if target is None:
+            self.refresh()
+            self.shape_button.showMenu()
+            return
+        tool: ShapeTool = self.last_shape_tool
+        if (
+            tool is ShapeTool.LINE_END
+            and target[1].shape_type is not AnnotationShape.LINE
+        ):
+            tool = ShapeTool.RESHAPE
+        self.start_shape_tool(tool)
+
+    def start_shape_tool(self, tool: ShapeTool) -> None:
+        """Start a shape tool on the selected geometry in the active pane."""
+        editor: ShapeEditor = self.active_shape_editor()
+        target: tuple[int, Annotation] | None = editor.target()
+        if target is None or self.mode is not InteractionMode.SELECT:
+            self.refresh()
+            return
+        if (
+            tool is ShapeTool.LINE_END
+            and target[1].shape_type is not AnnotationShape.LINE
+        ):
+            self.refresh()
+            return
+        if editor.has_draft():
+            editor.notice(
+                "Press Enter to apply or Esc to cancel before changing shape tools."
+            )
+            self.resume_image_focus()
+            return
+        self.last_shape_tool = tool
+        self.editors[editor.view].cancel_gesture()
+        editor.start(tool)
+        editor.notice()
+        self.resume_image_focus()
+
+    def trace(self) -> None:
+        """Arm or cancel tracing in the pane that owns the polygon sketch."""
+        self.active_shape_editor().start_trace()
+        self.refresh()
+        self.resume_image_focus()
+
+    def refresh_shape_controls(self) -> str:
+        """Synchronize enabled, pressed, and labeled shape controls."""
+        editor: ShapeEditor = self.active_shape_editor()
+        target: tuple[int, Annotation] | None = editor.target()
+        drawing: bool = self.mode in {InteractionMode.LINE, InteractionMode.POLYGON}
+        eligible: bool = self.mode is InteractionMode.SELECT and target is not None
+        self.shape_default.setEnabled(eligible or drawing)
+        self.shape_menu.menuAction().setEnabled(eligible or drawing)
+        tool: ShapeTool | None = editor.tool if eligible else None
+        label: str = tool.value if tool is not None else "Edit Shape"
+        if self.shape_default.text() != label:
+            self.shape_default.setText(label)
+            self.widget.workspace_layout.schedule()
+        self.shape_default.setChecked(tool is not None)
+        self.actions[self.mode].setChecked(tool is None)
+        for candidate, action in self.shape_actions.items():
+            action.setEnabled(
+                eligible
+                and (
+                    candidate is not ShapeTool.LINE_END
+                    or (
+                        target is not None
+                        and target[1].shape_type is AnnotationShape.LINE
+                    )
+                )
+            )
+            action.setChecked(candidate is tool)
+        self.snap_action.setEnabled(drawing or tool is not None)
+        self.trace_action.setEnabled(editor.can_trace() or editor.tracing)
+        self.trace_action.setChecked(editor.tracing)
+        return editor.instructions()
+
     def select_tool(self, mode: InteractionMode) -> bool:
         """Select one workspace tool without discarding unfinished geometry.
 
@@ -238,17 +369,21 @@ class WorkspaceControls(QtCore.QObject):
         Returns:
             Whether the requested tool became active.
         """
-        if mode is self.mode:
+        shape_editor: ShapeEditor = self.active_shape_editor()
+        if mode is self.mode and shape_editor.tool is None:
             self.actions[mode].setChecked(True)
             self.refresh()
             return True
-        if mode is not self.mode:
-            for pane, _canvas in self.feedback.panes:
-                if pane.graphics_view.line_points or pane.graphics_view.polygon_points:
-                    self.feedback.notice = f"Unfinished shape in {pane.label.text().title()}: Enter finishes; Esc cancels there before changing tools."
-                    self.actions[self.mode].setChecked(True)
-                    self.refresh()
-                    return False
+        for pane, _canvas in self.feedback.panes:
+            if pane.graphics_view.has_annotation_draft():
+                self.feedback.notice = f"Unfinished shape in {pane.label.text().title()}: Enter finishes; Esc cancels there before changing tools."
+                self.refresh()
+                return False
+        shape_editor.stop()
+        self.feedback.notice = ""
+        if mode is self.mode:
+            self.refresh()
+            return True
         self.switching = True
         self.mode = mode
         self.feedback.cancel_transfer()
@@ -296,6 +431,7 @@ class WorkspaceControls(QtCore.QObject):
         if self.mode is InteractionMode.SELECT:
             for pane, canvas in self.feedback.panes:
                 if pane.graphics_view is not view:
+                    self.shape_editors[pane.graphics_view].stop()
                     canvas.clear_external_annotation_selection()
                     canvas.selection = []
                     canvas.display_points()
@@ -309,7 +445,7 @@ class WorkspaceControls(QtCore.QObject):
         """
         for pane, _canvas in self.feedback.panes:
             view: CentralGraphicsView = pane.graphics_view
-            if view is not target and (view.line_points or view.polygon_points):
+            if view is not target and view.has_annotation_draft():
                 target.annotation_target_blocked = True
                 self.feedback.notice = f"Unfinished shape in {pane.label.text().title()}: finish with Enter or cancel with Esc in that pane."
                 self.refresh()
@@ -330,7 +466,7 @@ class WorkspaceControls(QtCore.QObject):
         if workspace is not None:
             allowed: bool = workspace.can_switch()
         else:
-            allowed = not (view.line_points or view.polygon_points)
+            allowed = not view.has_annotation_draft()
         if allowed:
             return True
         if workspace is None:
@@ -350,6 +486,7 @@ class WorkspaceControls(QtCore.QObject):
         canvas: Canvas
         view: CentralGraphicsView
         canvas, view = self.widget._active_annotation_context()
+        self.shape_editors[view].stop()
         view.cancel_annotation()
         canvas.clear_external_annotation_selection()
         canvas.selection = []
@@ -439,24 +576,27 @@ class WorkspaceControls(QtCore.QObject):
                 if part
             )
         )
+        shape_instructions: str = self.refresh_shape_controls()
         instructions: dict[InteractionMode, str] = {
             InteractionMode.COUNT: "Count dots · click adds a point; Shift+drag selects points; Esc clears selection; C+drag pans; Z+drag zooms in; X+drag zooms out.",
             InteractionMode.POINT: "Landmark · click any pane to place a point. Tool stays selected; Count dots returns to counting.",
             InteractionMode.LINE: "Line · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
             InteractionMode.POLYGON: "Polygon · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
-            InteractionMode.SELECT: "Select/Edit · click dots or annotations; Shift+click toggles; Shift+drag selects; drag selected items to move; Delete removes; Esc clears.",
+            InteractionMode.SELECT: "Select · click dots or annotations; Shift+click toggles; Shift+drag selects; drag selected items to move; Delete removes; Esc clears.",
         }
         if self.feedback.notice.startswith("Unfinished shape in ") and not any(
-            pane.graphics_view.line_points or pane.graphics_view.polygon_points
+            pane.graphics_view.has_annotation_draft()
             for pane, _canvas in self.feedback.panes
         ):
             self.feedback.notice = ""
-        message: str = self.feedback.notice or instructions[self.mode]
+        message: str = (
+            self.feedback.notice or shape_instructions or instructions[self.mode]
+        )
         for pane, _canvas in self.feedback.panes:
             vertices: int = len(pane.graphics_view.line_points) + len(
                 pane.graphics_view.polygon_points
             )
-            if vertices and not self.feedback.notice:
+            if vertices and not (self.feedback.notice or shape_instructions):
                 message = (
                     f"{pane.label.text().title()}: {vertices} vertices · " + message
                 )

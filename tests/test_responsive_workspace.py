@@ -151,11 +151,14 @@ def test_toolbar_compaction_preserves_actions(window: MainWindow, qtbot: Any) ->
     qtbot.wait(10)
     tools: Any = layout.groups[1]
     assert tools.compact
-    assert tools.selector.text() == "Select/Edit"
+    assert tools.selector.text() == "Select"
     assert not tools.selector.isHidden()
     assert controls.actions[InteractionMode.SELECT].isVisible()
     assert controls.actions[InteractionMode.SELECT].isChecked()
-    assert set(tools.selector.menu().actions()) == set(controls.actions.values())
+    assert set(tools.selector.menu().actions()) == {
+        *controls.actions.values(),
+        controls.shape_menu.menuAction(),
+    }
     for group in layout.groups:
         visible: list[QtWidgets.QToolButton] = (
             [group.selector] if group.compact else group.buttons

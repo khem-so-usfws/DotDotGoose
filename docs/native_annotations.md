@@ -44,17 +44,34 @@ For images where the complete image is valid for counting, use **Annotations > U
 
 ## Editing annotations
 
-Choose **Annotations > Select/Edit Annotation**.
+Use **Select** to click, move, or delete whole annotations and count dots.
+Shift+click adds or removes an item, and Shift+drag selects fully enclosed
+items. An overlap menu helps choose among nearby items.
 
-- Click an annotation to select it.
-- Drag a vertex handle to reshape a line or polygon.
-- Drag the annotation body to move the entire annotation.
-- Right-click a line or polygon to insert a vertex on the nearest segment.
-- Right-click a vertex to delete it when the remaining geometry stays valid.
-- Press **Delete** to remove an unlocked selected annotation.
-- Use **Ctrl+Z** and **Ctrl+Y** for undo and redo. Undo and redo follow edit order across open and closed image panes.
+Select one unlocked line or polygon and open **Edit Shape** in the main toolbar.
 
-Locked annotations remain selectable for inspection but cannot be moved, reshaped, or deleted until unlocked.
+| Tool | Workflow |
+| --- | --- |
+| Reshape | Click to sketch a replacement with two clear joins to the selected line or boundary. Click the area to keep if the preview offers two polygons, then press Enter. The dashed orange segment shows what will be replaced. |
+| Trim/Extend | Click the end of the line you want to change. Click along that line to choose a new stopping point, or click out from the end to sketch an extension. Press Enter to apply the preview. |
+| Edit Vertices | Drag a handle to move it. Click an edge to insert a vertex. Shift+click to toggle individual handles, then press Delete to remove the selected vertices. |
+
+**Snap** is optional and starts off. Turn it on to attach clicks to nearby
+image annotation edges or vertices. When reshaping, you can click two snapped
+joins on the selected annotation or sketch across it twice.
+
+To copy a section of a cutline into a new or reshaped count area, choose
+**Trace** while drawing that area. Click near the start and end of the section
+on the same visible cutline. Trace inserts the intervening cutline vertices in
+the clicked direction. Resume the polygon sketch, or trace another stretch.
+The line and polygon remain independently editable. Esc exits Trace and keeps
+the surrounding sketch. Snap and Trace are in **Edit Shape** at narrow widths.
+
+Press **Backspace** to remove the last reshape sketch point, or **Esc** to cancel the edit. After applying a reshape,
+continue working on the selected annotation or click **Select** to select a
+different shape. Edits preserve labels, styling, and other annotation
+properties, and invalid polygon geometry is blocked. **Ctrl+Z** and
+**Ctrl+Y** undo and redo in edit order across the project.
 
 ## Properties, visibility, and symbology
 
@@ -119,9 +136,9 @@ The source image is never resampled or modified by native annotations. Coordinat
 
 ## Shared toolbar tools
 
-The Tools toolbar exposes Count dots, Landmark, Line, Polygon, and Select/Edit.
+The Tools toolbar exposes Count dots, Landmark, Line, Polygon, Select, and Edit Shape.
 Choose one tool and use any open pane directly. Drawing tools stay active after
-completion. Select/Edit handles dots and every annotation type without choosing
+completion. Select handles dots and every annotation type without choosing
 a geometry type first. Shift+click toggles items, Shift+drag from empty space adds
 items fully enclosed by the box, and dragging an already-selected item moves the
 selected group. Delete/Backspace removes the group in one undoable action. Clicking empty space or pressing Esc clears selection
