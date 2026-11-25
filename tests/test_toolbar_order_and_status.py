@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from ddg.central_graphics_view import InteractionMode
@@ -106,26 +107,51 @@ def test_working_directory_has_visible_space(window: MainWindow, qtbot: Any) -> 
     assert label.text()
 
 
+@pytest.mark.parametrize("right_minimum", [None, 336])
 def test_legacy_right_proportion_and_manual_sizes(
-    window: MainWindow, qtbot: Any
+    window: MainWindow,
+    qtbot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    right_minimum: int | None,
 ) -> None:
-    """Right starts at one quarter of post-left space and respects manual adjustment.
+    """Check default and manual splitter sizes within the widget minimums.
 
     Args:
         window: Initialized application window.
         qtbot: Qt interaction fixture.
+        monkeypatch: Fixture for the sidebar minimum size.
+        right_minimum: Optional larger minimum for the right sidebar.
     """
-    layout: Any = window.centralWidget().workspace_layout
+    widget: Any = window.centralWidget()
+    layout: Any = widget.workspace_layout
+    if right_minimum is not None:
+        # Reproduce a wider sidebar minimum even on a host with smaller fonts.
+        monkeypatch.setattr(
+            widget.frameCustomField,
+            "minimumSizeHint",
+            lambda: QtCore.QSize(right_minimum, 0),
+        )
+        window.setMaximumWidth(1539)
     window.resize(1800, 950)
-    qtbot.wait(30)
+    qtbot.waitUntil(lambda: not layout.queued)
     sizes: list[int] = layout.splitter.sizes()
     assert abs(sizes[0] - 425) <= 2
-    assert abs(sizes[2] / (sizes[1] + sizes[2]) - 0.25) < 0.005
+    available: int = sizes[1] + sizes[2]
+    expected_right: int = min(
+        max(round(available / 4), widget.frameCustomField.minimumWidth()),
+        available - widget.frameCenter.minimumWidth(),
+    )
+    assert abs(sizes[2] - expected_right) <= 2
+
     layout.splitter.setSizes([350, sizes[1] + 75, sizes[2]])
     layout.splitter.splitterMoved.emit(350, 1)
     chosen: list[int] = layout.splitter.sizes()
-    window.resize(1900, 950)
-    qtbot.wait(30)
+    # Shrink from the actual size because Windows may cap a growth request.
+    previous_width: int = layout.splitter.width()
+    window.resize(window.width() - 60, window.height())
+    qtbot.waitUntil(
+        lambda: layout.splitter.width() < previous_width and not layout.queued
+    )
     assert abs(layout.splitter.sizes()[0] - chosen[0]) <= 2
     assert abs(layout.splitter.sizes()[2] - chosen[2]) <= 2
 
