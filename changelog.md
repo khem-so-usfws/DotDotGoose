@@ -3,6 +3,13 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.9.2
+
+- Load Auto-DDG Cutline's recommended or analyst-checked photo selection into
+  DotDotGoose. Use it in every pane and the count sidebar in filename order.
+- Export counts, points, or image chips for selected photos, with an explicit
+  all-photos option in the export menu. Project saves retain the full data.
+
 ## 1.9.1
 
 - Separate whole-item selection from editing a line or polygon's geometry.

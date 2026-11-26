@@ -22,18 +22,20 @@
 # along with with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 # --------------------------------------------------------------------------
+import csv
 import os
 import json
 import glob
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any, Callable, TypeAlias, cast
+from typing import Any, Callable, Iterable, TypeAlias, cast
 
 import numpy as np
 
 from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+from .photo_selection import PhotoSelection
 from .annotations.model import Point
 from .annotations import (
     Annotation,
@@ -66,6 +68,7 @@ class Canvas(QtWidgets.QGraphicsScene):
     image_loading = QtCore.pyqtSignal(bool, bool)  # Params (Large image, redraw)
     image_loaded = QtCore.pyqtSignal(str, str)  # Params (directory, image_name)
     image_about_to_change: QtCore.pyqtSignal = QtCore.pyqtSignal()
+    photo_selection_changed: QtCore.pyqtSignal = QtCore.pyqtSignal()
     points_loaded = QtCore.pyqtSignal(str)  # Params(survey_id)
     directory_set = QtCore.pyqtSignal(str)  # Params (directory)
     fields_updated = QtCore.pyqtSignal(list)
@@ -87,6 +90,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.flush_fields: Callable[[], None] | None = None
         self.dirty: bool = False
         self.points: dict[str, dict[str, list[QtCore.QPointF]]] = {}
+        self.photo_selection: PhotoSelection | None = None
         self.colors: dict[str, QtGui.QColor] = {}
         self.coordinates: dict[str, dict[str, float | str]] = {}
         self.custom_fields: dict[str, Any] = {"fields": [], "data": {}}
@@ -1740,50 +1744,76 @@ class Canvas(QtWidgets.QGraphicsScene):
 
         self._display_point_selection()
 
-    def export_counts(self, file_name):
-        if self.current_image_name is not None:
-            file = open(file_name, 'w')
-            output = self.tr('survey id,image')
-            for class_name in self.classes:
-                output += ',' + class_name
-            output += ",x,y"
-            for field_name, _ in self.custom_fields['fields']:
-                output += ',{}'.format(field_name)
-            output += '\n'
-            file.write(output)
-            for image in self.points:
-                output = self.survey_id + ',' + image
-                for class_name in self.classes:
-                    if class_name in self.points[image]:
-                        output += ',' + str(len(self.points[image][class_name]))
-                    else:
-                        output += ',0'
-                if image in self.coordinates:
-                    output += ',' + self.coordinates[image]['x']
-                    output += ',' + self.coordinates[image]['y']
-                else:
-                    output += ',,'
-                for field_name, _ in self.custom_fields['fields']:
-                    if image in self.custom_fields['data'][field_name]:
-                        output += ',{}'.format(self.custom_fields['data'][field_name][image])
-                    else:
-                        output += ','
-                output += "\n"
-                file.write(output)
-            file.close()
+    def project_image_names(self, *, all_photos: bool = False) -> list[str]:
+        """Return the in-scope image names without altering project data.
 
-    def export_points(self, file_name):
-        if self.current_image_name is not None:
-            file = open(file_name, 'w')
-            output = self.tr('survey id,image,class,x,y')
-            file.write(output)
-            for image in self.points:
+        Args:
+            all_photos: Use the full project for an explicitly unfiltered export.
+
+        Returns:
+            Selected filenames or all project image names in project order.
+        """
+        if self.photo_selection is not None and not all_photos:
+            return list(self.photo_selection.names)
+        return list(self.points)
+
+    def photo_in_scope(self, name: str) -> bool:
+        """Return whether the active photo selection permits the given name."""
+        return self.photo_selection is None or name in self.photo_selection.names
+
+    def export_counts(self, file_name: str, *, all_photos: bool = False) -> None:
+        """Export summary rows for the selected photos, including zero counts.
+
+        Args:
+            file_name: Destination CSV.
+            all_photos: Export the full project when explicitly requested.
+        """
+        if self.current_image_name is None:
+            return
+        with open(file_name, "w", encoding="utf-8", newline="") as stream:
+            write_row: Callable[[Iterable[object]], object] = csv.writer(
+                stream, lineterminator="\n"
+            ).writerow
+            headers: list[str] = self.tr("survey id,image").split(",")
+            field_names: list[str] = [name for name, _ in self.custom_fields["fields"]]
+            write_row([*headers, *self.classes, "x", "y", *field_names])
+            for image in self.project_image_names(all_photos=all_photos):
+                points: dict[str, list[QtCore.QPointF]] = self.points[image]
+                coordinates: dict[str, float | str] = self.coordinates.get(image, {})
+                write_row(
+                    [
+                        self.survey_id,
+                        image,
+                        *(len(points.get(name, [])) for name in self.classes),
+                        coordinates.get("x", ""),
+                        coordinates.get("y", ""),
+                        *(
+                            self.custom_fields["data"][name].get(image, "")
+                            for name in field_names
+                        ),
+                    ]
+                )
+
+    def export_points(self, file_name: str, *, all_photos: bool = False) -> None:
+        """Export point rows for the selected photos.
+
+        Args:
+            file_name: Destination CSV.
+            all_photos: Export the full project when explicitly requested.
+        """
+        if self.current_image_name is None:
+            return
+        with open(file_name, "w", encoding="utf-8", newline="") as stream:
+            write_row: Callable[[Iterable[object]], object] = csv.writer(
+                stream, lineterminator="\n"
+            ).writerow
+            write_row(self.tr("survey id,image,class,x,y").split(","))
+            for image in self.project_image_names(all_photos=all_photos):
                 for class_name in self.classes:
-                    if class_name in self.points[image]:
-                        for point in self.points[image][class_name]:
-                            output = '\n{},{},{},{},{}'.format(self.survey_id, image, class_name, point.x(), point.y())
-                            file.write(output)
-            file.close()
+                    for point in self.points[image].get(class_name, []):
+                        write_row(
+                            [self.survey_id, image, class_name, point.x(), point.y()]
+                        )
 
     def export_overlay(self, file_name):
         if self.current_image_name is not None:
@@ -1930,6 +1960,8 @@ class Canvas(QtWidgets.QGraphicsScene):
         if isinstance(file_name, QtCore.QUrl):
             file_name = in_file_name.toLocalFile()
 
+        if not redraw and not self.photo_in_scope(os.path.basename(file_name)):
+            return
         if self.directory == "":
             self.directory = os.path.split(file_name)[0]
             self.directory_set.emit(self.directory)
@@ -2049,17 +2081,19 @@ class Canvas(QtWidgets.QGraphicsScene):
                 self.image_loaded.emit(self.directory, self.current_image_name)
             QtWidgets.QApplication.restoreOverrideCursor()
 
-    def load_images(self, images):
-        for file in images:
-            file_name = file
-            if isinstance(file, QtCore.QUrl):
-                file_name = file.toLocalFile()
-
-            image_name = os.path.split(file_name)[1]
-            if image_name not in self.points:
-                self.points[image_name] = {}
-        if len(images) > 0:
-            self.load_image(images[0])
+    def load_images(self, images: list[str | QtCore.QUrl]) -> None:
+        """Register all provided photos and display the first in scope."""
+        first_visible: str | QtCore.QUrl | None = None
+        for image in images:
+            path: str = image.toLocalFile() if isinstance(image, QtCore.QUrl) else image
+            name: str = os.path.basename(path)
+            self.points.setdefault(name, {})
+            if first_visible is None and self.photo_in_scope(name):
+                first_visible = image
+        if first_visible is not None:
+            self.load_image(first_visible)
+        if self.photo_selection is not None:
+            self.photo_selection_changed.emit()
 
     def load_points(self, file_name):
         self.reset()
@@ -2322,6 +2356,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.image_about_to_change.emit()
         self.dirty = False
         self.points = {}
+        self.photo_selection = None
         self.colors = {}
         self.classes = []
         self.classes = []
@@ -2348,6 +2383,7 @@ class Canvas(QtWidgets.QGraphicsScene):
         self.points_loaded.emit('')
         self.image_loaded.emit('', '')
         self.directory_set.emit('')
+        self.photo_selection_changed.emit()
 
     def remove_class(self, class_name):
         index = self.classes.index(class_name)

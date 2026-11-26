@@ -22,12 +22,15 @@
 # along with with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 # --------------------------------------------------------------------------
+from pathlib import Path
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from ddg import AboutDialog, CentralWidget, __version__
+from ddg import AboutDialog, Canvas, CentralWidget, __version__
 from ddg.annotation_symbology_dialog import AnnotationSymbologyDialog
 from ddg.annotations import AnnotationShape
 from ddg.central_graphics_view import InteractionMode
+from ddg.photo_selection import PhotoSelection, read_photo_selection
 from ddg.workspace_controls import WorkspaceControls
 
 
@@ -53,6 +56,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         view_menu: QtWidgets.QMenu = self.menuBar().addMenu(self.tr("View"))
         view_menu.setObjectName("View")
+        photo_menu: QtWidgets.QMenu = view_menu.addMenu(self.tr("Photo Selection"))
+        photo_menu.addAction(self.tr("Load Selection JSON…"), self.load_photo_selection)
+        self.show_all_photos_action: QtGui.QAction = photo_menu.addAction(
+            self.tr("Show All Photos"),
+            lambda: self.centralWidget().apply_photo_selection(None),
+        )
+        self.photo_selection_label: QtWidgets.QLabel = QtWidgets.QLabel(self)
+        self.photo_selection_label.setObjectName("photoSelectionIndicator")
+        self.statusBar().addPermanentWidget(self.photo_selection_label)
+        self.centralWidget().canvas.photo_selection_changed.connect(
+            self.update_photo_selection_indicator
+        )
+        self.update_photo_selection_indicator()
         self.navigator_action: QtGui.QAction = view_menu.addAction(
             self.tr("Show Image Navigators")
         )
@@ -467,6 +483,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.centralWidget().workspace_feedback.controls.select_tool(
             InteractionMode.POINT
         )
+
+    def load_photo_selection(self) -> None:
+        """Open a companion selection and apply it to the current project."""
+        widget: CentralWidget = self.centralWidget()
+        if not widget.canvas.directory or not widget.canvas.points:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("Photo Selection"),
+                self.tr("Open the photo folder or a DDG project first."),
+            )
+            return
+        selected: PhotoSelection | None = widget.canvas.photo_selection
+        initial_folder: str = (
+            str(selected.source.parent) if selected else widget.canvas.directory
+        )
+        file_name: str
+        file_name, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            self.tr("Load Photo Selection JSON"),
+            initial_folder,
+            self.tr("JSON files (*.json)"),
+        )
+        if not file_name:
+            return
+        try:
+            widget.apply_photo_selection(read_photo_selection(Path(file_name)))
+        except (OSError, ValueError) as error:
+            message: QtWidgets.QMessageBox = QtWidgets.QMessageBox(self)
+            message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+            message.setWindowTitle(self.tr("Photo Selection"))
+            lines: list[str] = str(error).splitlines()
+            message.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            message.setText("\n".join(lines[:4]))
+            if len(lines) > 4:
+                message.setDetailedText(str(error))
+            message.exec()
+
+    def update_photo_selection_indicator(self) -> None:
+        """Show how many project photos are in the active filter."""
+        canvas: Canvas = self.centralWidget().canvas
+        selection: PhotoSelection | None = canvas.photo_selection
+        self.show_all_photos_action.setEnabled(selection is not None)
+        self.photo_selection_label.setVisible(selection is not None)
+        if selection is not None:
+            self.photo_selection_label.setText(
+                self.tr("Selected photos · {} of {}").format(
+                    len(selection.names), len(canvas.points)
+                )
+            )
+            self.photo_selection_label.setToolTip(
+                f"{selection.description}\n{selection.source}"
+            )
 
     def start_cutline(self) -> None:
         """Start native cutline drawing."""

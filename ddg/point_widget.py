@@ -85,6 +85,7 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
         self.canvas.image_loaded.connect(self.image_loaded)
         self.canvas.update_point_count.connect(self.update_point_count)
         self.canvas.points_loaded.connect(self.points_loaded)
+        self.canvas.photo_selection_changed.connect(self.display_count_tree)
         self.canvas.metadata_imported.connect(self.display_count_tree)
 
         self.model = QtGui.QStandardItemModel()
@@ -170,9 +171,10 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             row += 1
         self.tableWidgetClasses.selectionModel().clear()
 
-    def display_count_tree(self):
+    def display_count_tree(self) -> None:
+        """List count data for the current photo scope in filename order."""
         self.reset_model()
-        for image in sorted(self.canvas.points):
+        for image in sorted(self.canvas.project_image_names()):
             image_item = QtGui.QStandardItem(image)
             image_item.setEditable(False)
             class_item = QtGui.QStandardItem('')
@@ -203,26 +205,56 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
                 image_item.appendRow([class_item, class_count])
         self.treeView.scrollTo(self.current_model_index)
 
-    def export(self):
+    def export(self, *, all_photos: bool = False) -> None:
+        """Export selected photos or explicitly use the full project.
+
+        Args:
+            all_photos: Include every project photo in a bulk export.
+        """
+        selected_only: bool = self.canvas.photo_selection is not None and not all_photos
+        suffix: str = "-selected" if selected_only else ""
+        directory: str = self.canvas.directory
+        file_name: str
         if self.radioButtonCounts.isChecked():
-            file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Count Summary'), os.path.join(self.canvas.directory, 'counts.csv'), 'Text CSV (*.csv)')
-            if file_name[0] != '':
-                self.canvas.export_counts(file_name[0])
+            file_name, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                self.tr("Export Count Summary"),
+                os.path.join(directory, f"counts{suffix}.csv"),
+                self.tr("Text CSV (*.csv)"),
+            )
+            if file_name:
+                self.canvas.export_counts(file_name, all_photos=all_photos)
         elif self.radioButtonPoints.isChecked():
-            file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Points'), os.path.join(self.canvas.directory, 'points.csv'), 'Text CSV (*.csv)')
-            if file_name[0] != '':
-                self.canvas.export_points(file_name[0])
+            file_name, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                self.tr("Export Points"),
+                os.path.join(directory, f"points{suffix}.csv"),
+                self.tr("Text CSV (*.csv)"),
+            )
+            if file_name:
+                self.canvas.export_points(file_name, all_photos=all_photos)
         elif self.radioButtonOverlay.isChecked():
             canvas: Canvas = (
                 self.active_image_canvas() if self.active_image_canvas else self.canvas
             )
             if not canvas.current_image_name:
                 return
-            file_name = QtWidgets.QFileDialog.getSaveFileName(self, self.tr('Export Image With Points'), os.path.join(self.canvas.directory, 'overlay.png'), 'PNG (*.png);;JPG (*.jpg)')
-            if file_name[0] != '':
-                canvas.export_overlay(file_name[0])
+            file_name, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                self.tr("Export Image With Points"),
+                os.path.join(directory, "overlay.png"),
+                self.tr("PNG (*.png);;JPG (*.jpg)"),
+            )
+            if file_name:
+                canvas.export_overlay(file_name)
         else:
-            self.chip_dialog = ChipDialog(self.canvas.classes, self.canvas.points, self.canvas.directory, self.canvas.survey_id)
+            points: dict[str, dict[str, list[QtCore.QPointF]]] = {
+                name: self.canvas.points[name]
+                for name in self.canvas.project_image_names(all_photos=all_photos)
+            }
+            self.chip_dialog = ChipDialog(
+                self.canvas.classes, points, directory, self.canvas.survey_id
+            )
             self.chip_dialog.show()
 
     def image_loaded(self, directory, file_name):
@@ -355,12 +387,19 @@ class PointWidget(QtWidgets.QWidget, WIDGET):
             self.horizontalSliderBrightness.blockSignals(False)
             self.horizontalSliderContrast.blockSignals(False)
 
-    def update_point_count(self, image_name, class_name, class_count):
+    def update_point_count(
+        self, image_name: str, class_name: str, class_count: int
+    ) -> None:
+        """Refresh a sidebar count row if its photo is visible."""
+        if not self.canvas.photo_in_scope(image_name):
+            return
         items = self.model.findItems(image_name)
         if len(items) == 0:
             self.display_count_tree()
         else:
-            items[0].child(self.canvas.classes.index(class_name), 1).setText(str(class_count))
+            items[0].child(self.canvas.classes.index(class_name), 1).setText(
+                str(class_count)
+            )
 
     def update_ui_settings(self):
         ui = self.canvas.ui

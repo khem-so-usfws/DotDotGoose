@@ -575,18 +575,39 @@ class ResponsiveWorkspace(QtCore.QObject):
         point_widget: PointWidget = self.widget.point_widget
         grid: QtWidgets.QGridLayout = point_widget.gridLayout_4
         export_menu: QtWidgets.QMenu = QtWidgets.QMenu(point_widget.pushButtonExport)
+        all_photos: QtWidgets.QMenu = QtWidgets.QMenu("All photos", export_menu)
+        bulk_actions: list[tuple[QtGui.QAction, str]] = []
         for label, radio in (
-            ("Counts…", point_widget.radioButtonCounts),
-            ("Points…", point_widget.radioButtonPoints),
-            ("Chips…", point_widget.radioButtonChips),
-            ("Overlay…", point_widget.radioButtonOverlay),
+            ("Counts", point_widget.radioButtonCounts),
+            ("Points", point_widget.radioButtonPoints),
+            ("Chips", point_widget.radioButtonChips),
+            ("Overlay", point_widget.radioButtonOverlay),
         ):
             radio.hide()
             action: QtGui.QAction = export_menu.addAction(
-                label, lambda r=radio: self.export(r)
+                f"{label}…", lambda r=radio: self.export(r)
             )
-            if label == "Overlay…":
+            if radio is point_widget.radioButtonOverlay:
                 action.setToolTip("Export the active image with its dot overlay")
+            else:
+                bulk_actions.append((action, label))
+                all_photos.addAction(
+                    f"{label}…", lambda r=radio: self.export(r, all_photos=True)
+                )
+
+        def update_export_scope() -> None:
+            """Label filtered exports and offer an explicit full-project export."""
+            selected: bool = self.widget.canvas.photo_selection is not None
+            for action, label in bulk_actions:
+                action.setText(
+                    f"{label} (selected photos)…" if selected else f"{label}…"
+                )
+            if selected and all_photos.menuAction() not in export_menu.actions():
+                export_menu.addMenu(all_photos)
+            elif not selected:
+                export_menu.removeAction(all_photos.menuAction())
+
+        self.widget.canvas.photo_selection_changed.connect(update_export_scope)
         export_menu.setToolTipsVisible(True)
         point_widget.pushButtonExport.clicked.disconnect(point_widget.export)
         point_widget.pushButtonExport.setText("Export…")
@@ -625,15 +646,21 @@ class ResponsiveWorkspace(QtCore.QObject):
             "Import classes and custom fields from another point file"
         )
 
-    def export(self, radio: QtWidgets.QRadioButton) -> None:
+    def export(
+        self, radio: QtWidgets.QRadioButton, *, all_photos: bool = False
+    ) -> None:
         """Run the existing exporter for an explicitly chosen output type.
 
         Args:
             radio: Hidden legacy selection backing the exporter.
+            all_photos: Include all project photos in a bulk export.
         """
         self.flush()
         radio.setChecked(True)
-        self.widget.point_widget.export()
+        if all_photos:
+            self.widget.point_widget.export(all_photos=True)
+        else:
+            self.widget.point_widget.export()
 
     def flush(self) -> None:
         """Commit pending text while the old image binding is still intact."""

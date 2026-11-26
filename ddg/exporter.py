@@ -22,12 +22,15 @@
 # along with with this software.  If not, see <http://www.gnu.org/licenses/>.
 #
 # --------------------------------------------------------------------------
+import csv
 import os
+from collections.abc import Callable, Iterable
+from typing import TextIO
+
 import numpy as np
 
 from PIL import Image
 from PyQt6 import QtCore
-
 
 class Exporter(QtCore.QThread):
     progress = QtCore.pyqtSignal(int)
@@ -47,13 +50,18 @@ class Exporter(QtCore.QThread):
         for class_name in classes:
             self.totals[class_name] = 0
 
-    def run(self):
+    def run(self) -> None:
+        """Write image chips and a summary for the supplied photo scope."""
         for class_name in self.classes:
-            os.makedirs('{}{}{}'.format(self.output_directory, os.path.sep, class_name))
-        summary_file_name = '{}{}summary.csv'.format(self.output_directory, os.path.sep)
-        summary_file = open(summary_file_name, 'w')
-        output = self.tr('survey id,image,class,x,y,chip name')
-        summary_file.write(output)
+            os.makedirs("{}{}{}".format(self.output_directory, os.path.sep, class_name))
+        summary_file_name: str = os.path.join(self.output_directory, "summary.csv")
+        summary_file: TextIO = open(
+            summary_file_name, "w", encoding="utf-8", newline=""
+        )
+        write_row: Callable[[Iterable[object]], object] = csv.writer(
+            summary_file, lineterminator="\n"
+        ).writerow
+        write_row(self.tr("survey id,image,class,x,y,chip name").split(","))
         progress = 2
         for image in self.points:
             try:
@@ -67,10 +75,20 @@ class Exporter(QtCore.QThread):
                             progress += 1
                             # set up file name and summary entry
                             self.totals[class_name] += 1
-                            file_name = '{:010d}{}'.format(self.totals[class_name], self.file_type)
-                            chip_name = '{}{}'.format(directory, file_name)
-                            output = '\n{},{},{},{},{},{}'.format(self.survey_id, image, class_name, point.x(), point.y(), chip_name)
-                            summary_file.write(output)
+                            file_name = "{:010d}{}".format(
+                                self.totals[class_name], self.file_type
+                            )
+                            chip_name = "{}{}".format(directory, file_name)
+                            write_row(
+                                [
+                                    self.survey_id,
+                                    image,
+                                    class_name,
+                                    point.x(),
+                                    point.y(),
+                                    chip_name,
+                                ]
+                            )
                             # caculate the clip window
                             x = max(0, int(point.x()) - self.x_offset)
                             y = max(0, int(point.y()) - self.y_offset)
@@ -92,8 +110,16 @@ class Exporter(QtCore.QThread):
                     if class_name in self.points[image]:
                         for point in self.points[image][class_name]:
                             progress += 1
-                            output = '\n{},{},{},{},{},{}'.format(self.survey_id, image, class_name, 0.0, 0.0, 'Image Not Found')
-                            summary_file.write(output)
+                            write_row(
+                                [
+                                    self.survey_id,
+                                    image,
+                                    class_name,
+                                    0.0,
+                                    0.0,
+                                    "Image Not Found",
+                                ]
+                            )
                             self.progress.emit(progress)
 
         summary_file.close()

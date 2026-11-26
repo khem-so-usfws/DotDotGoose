@@ -24,6 +24,7 @@
 # --------------------------------------------------------------------------
 import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from PyQt6 import QtCore, QtGui, QtWidgets, uic
@@ -37,6 +38,7 @@ from ddg.annotations import Annotation, AnnotationShape
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 from ddg.compare_pane import ComparePane
 from ddg.image_workspace import ImageWorkspace
+from ddg.photo_selection import PhotoSelection
 from ddg.workspace_feedback import WorkspaceFeedback
 from ddg.responsive_workspace import ResponsiveWorkspace
 
@@ -375,6 +377,55 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         canvas.image_loaded.connect(view.reset_annotation_state)
         pane.image_requested.connect(lambda image: self.load_pane_image(name, image))
 
+    def apply_photo_selection(self, selection: PhotoSelection | None) -> bool:
+        """Set or clear the shared photo filter after validating every image.
+
+        Args:
+            selection: Loaded companion selection or None for all photos.
+
+        Returns:
+            Whether the selection is active, or cleared as requested.
+
+        Raises:
+            ValueError: If any selected filenames are absent from the project.
+        """
+        if selection is not None:
+            directory: Path = Path(self.canvas.directory)
+            missing: list[str] = [
+                name
+                for name in selection.names
+                if name not in self.canvas.points or not (directory / name).is_file()
+            ]
+            if missing:
+                raise ValueError(
+                    "Selected photos are missing from this project:\n"
+                    + "\n".join(missing)
+                )
+        if self.canvas.photo_selection == selection:
+            return True
+        if self.image_workspace is not None:
+            if not self.image_workspace.can_switch():
+                return False
+        elif any(
+            pane.graphics_view.has_annotation_draft()
+            for pane, _ in self.image_panes.values()
+        ):
+            return False
+        self.canvas.photo_selection = selection
+        if self.image_workspace is not None:
+            self.image_workspace.refresh_after_photo_selection()
+        else:
+            if (
+                selection is not None
+                and self.canvas.current_image_name not in selection.names
+            ):
+                self.load_current_image(selection.names[0])
+            if self._compare_enabled and not self._available_reference_images():
+                self.reference_canvas.release_image()
+            self.refresh_compare_images(load_if_needed=self._compare_enabled)
+        self.canvas.photo_selection_changed.emit()
+        return True
+
     def load_pane_image(self, pane_name: str, image_name: str) -> None:
         """Load a photo into one pane without advancing the other panes.
 
@@ -382,6 +433,8 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             pane_name: Target pane identifier.
             image_name: Working-directory image basename.
         """
+        if not self.canvas.photo_in_scope(image_name):
+            return
         if pane_name == "current":
             self.load_current_image(image_name)
             return
@@ -922,7 +975,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         """Return existing project images except the Current image."""
         current: str | None = self.canvas.current_image_name
         names: list[str] = []
-        for image_name in sorted(self.canvas.points):
+        for image_name in sorted(self.canvas.project_image_names()):
             if image_name == current:
                 continue
             path: str = os.path.join(self.canvas.directory, image_name)
@@ -946,7 +999,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             return
         all_names: list[str] = [
             name
-            for name in sorted(self.canvas.points)
+            for name in sorted(self.canvas.project_image_names())
             if os.path.isfile(os.path.join(self.canvas.directory, name))
         ]
         self.current_pane.set_images(all_names, self.canvas.current_image_name)
@@ -971,7 +1024,7 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         """
         if not names:
             return None
-        all_names: list[str] = sorted(self.canvas.points)
+        all_names: list[str] = sorted(self.canvas.project_image_names())
         current: str | None = self.canvas.current_image_name
         if current in all_names:
             current_index: int = all_names.index(current)
@@ -989,7 +1042,11 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if self.image_workspace is not None:
             self.load_pane_image("reference", image_name)
             return
-        if not image_name or image_name == self.canvas.current_image_name:
+        if (
+            not image_name
+            or image_name == self.canvas.current_image_name
+            or not self.canvas.photo_in_scope(image_name)
+        ):
             return
         self._clear_pending_compare_annotation_tool()
         image_path: str = os.path.join(self.canvas.directory, image_name)

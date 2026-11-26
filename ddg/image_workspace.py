@@ -493,7 +493,7 @@ class ImageWorkspace(QtCore.QObject):
         project = self.widget.canvas
         names: list[str] = [
             name
-            for name in sorted(project.points)
+            for name in sorted(project.project_image_names())
             if (Path(project.directory) / name).is_file()
         ]
         used: set[str] = {
@@ -504,10 +504,27 @@ class ImageWorkspace(QtCore.QObject):
         for name, (pane, canvas) in self.widget.image_panes.items():
             selected: str | None = canvas.current_image_name or self.photos.get(name)
             if selected not in names:
-                selected = next((photo for photo in names if photo not in used), None)
+                # A small selection can be shared by several open panes.
+                selected = next(
+                    (photo for photo in names if photo not in used),
+                    names[0] if names else None,
+                )
             if selected:
                 used.add(selected)
             pane.set_images(names, selected)
+
+    def refresh_after_photo_selection(self) -> None:
+        """Keep allowed images and replace excluded images in open panes."""
+        self.refresh_images()
+        # Capture replacement choices before image-load signals refresh the pickers.
+        replacements: list[tuple[str, str]] = []
+        for name, (pane, canvas) in self.widget.image_panes.items():
+            photo: str | None = pane.selected_image()
+            if name in self.opened and photo and photo != canvas.current_image_name:
+                replacements.append((name, photo))
+        for name, photo in replacements:
+            self.widget.load_pane_image(name, photo)
+        self.refresh_images()
 
     def update_title(self, name: str, photo: str) -> None:
         """Put the photo in the floating window title.

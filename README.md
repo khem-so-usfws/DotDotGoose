@@ -4,7 +4,7 @@ DotDotGoose is a free, open source tool for manually counting objects in images.
 This fork extends upstream DotDotGoose 1.7.1 with native annotations, up to four dockable
 image panes, and shared counting and editing tools.
 
-Current fork version **1.9.1**.
+Current fork version **1.9.2**.
 
 Count points and annotations retain original-image pixel coordinates, making
 them suitable for review, analysis, and future computer-assisted counting.
@@ -16,7 +16,7 @@ Download the Windows x64 ZIP from this fork's
 Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
 folder. Keep the bundled runtime files alongside the executable.
 
-The 1.9.1 package is named `DotDotGoose-1.9.1-windows-x64.zip`. Python and Conda
+The 1.9.2 package is named `DotDotGoose-1.9.2-windows-x64.zip`. Python and Conda
 are required only when running from source or building a release.
 
 ## Counting and image panes
@@ -62,6 +62,34 @@ counting. See the [Panes guide](docs/compare_pane.md) for the full workflow.
 
 C, Z, and X also work while drawing or editing annotations. Choose **Count dots**
 to return to counting after using another tool.
+
+## Photo selection from Auto-DDG Cutline
+
+Open the original photo folder or a DDG project. Choose **View → Photo Selection
+→ Load Selection JSON…** and open one of the companion's files:
+
+- `tier2-selection.json` contains the exact photos checked before **Refine
+  cutlines**. In the refinement job, this file is one folder above the nested
+  `run.json` and report. Use it for counting on the reviewed set.
+- `selection-plan.json` contains the plan's counting subset. Use the Tier 1
+  copy to review the initial recommendation in DDG.
+
+DDG matches original filenames. Every picker, Previous/Next, and the count
+sidebar show the selected photos in filename order. When an open pane shows a
+photo outside the selection, DDG switches it to a selected photo. The status
+bar shows the number of selected and total project photos. If any requested
+photo is missing, the import reports the missing filenames and keeps the
+current selection.
+
+**Export…** uses the selection for Counts CSV, Points CSV, and image chips.
+Counts CSV includes selected photos with zero counts. Use **Export… → All
+photos** to export the full project while keeping the filter. **Overlay…**
+exports the active photo. Save and recovery include the full project, and
+image annotation sidecars stay with their respective photos.
+
+Choose **View → Photo Selection → Show All Photos** to clear the filter.
+A filter applies to the current session. Opening another project or resetting
+the workspace clears it.
 
 ## Native annotations and shape editing
 
@@ -230,8 +258,8 @@ The script runs the tests, builds the application using `DotDotGoose.spec`, adds
 the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.9.1-windows-x64\DotDotGoose.exe
-dist\DotDotGoose-1.9.1-windows-x64.zip
+dist\DotDotGoose-1.9.2-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.9.2-windows-x64.zip
 ```
 
 The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
@@ -249,8 +277,8 @@ folder, add the documentation, and create the ZIP.
 Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-set "DDG_STAGE=%TEMP%\ddg-1.9.1-release-%RANDOM%"
-set "DDG_PACKAGE=DotDotGoose-1.9.1-windows-x64"
+set "DDG_STAGE=%TEMP%\ddg-1.9.2-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.9.2-windows-x64"
 
 powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
 
@@ -267,18 +295,18 @@ annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
 Windows machine without Python or Conda when testing the packaged application.
 
 For each new release, commit the final source, push the release branch, and
-create an annotated version tag. The example below uses `main` and `v1.9.1`.
+create an annotated version tag. The example below uses `main` and `v1.9.2`.
 Use a new version for a release following an already published tag.
 
 ```bat
 git push origin main
-git tag -a v1.9.1 -m "DotDotGoose 1.9.1"
-git push origin refs/tags/v1.9.1
+git tag -a v1.9.2 -m "DotDotGoose 1.9.2"
+git push origin refs/tags/v1.9.2
 ```
 
 Create a release from that tag on the
 [GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
-add release notes, and attach `DotDotGoose-1.9.1-windows-x64.zip`. The attached
+add release notes, and attach `DotDotGoose-1.9.2-windows-x64.zip`. The attached
 Windows ZIP contains the executable and runtime files. GitHub's automatic
 source archives contain the source code.
 
@@ -301,7 +329,8 @@ Use this fork's releases for the features described here.
 During October and November 2026, OpenAI ChatGPT helped generate and revise
 Python code, automated tests, and documentation for this fork, including work
 on native annotations, dockable image panes, and workspace controls.
-Development of version 1.9.1 used OpenAI Codex with the GPT-6 model family.
+Development of versions 1.9.1 and 1.9.2 used OpenAI Codex with the GPT-6 model
+family.
 The fork maintainer reviewed changes and tested application behavior on Windows.
 Automated tests checked the affected workflows. The maintainer is responsible
 for the released software.

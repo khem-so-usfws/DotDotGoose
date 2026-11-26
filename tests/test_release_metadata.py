@@ -10,9 +10,9 @@ from ddg import __version__
 from ddg.about_dialog import AboutDialog
 
 
-def test_release_version_is_1_9_1() -> None:
-    """The application advertises version 1.9.1."""
-    assert __version__ == "1.9.1"
+def test_release_version_is_1_9_2() -> None:
+    """The application advertises version 1.9.2."""
+    assert __version__ == "1.9.2"
 
 
 def test_about_dialog_lists_khem_so_as_contributor(qtbot: Any) -> None:
