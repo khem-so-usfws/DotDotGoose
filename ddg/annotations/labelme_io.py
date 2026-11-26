@@ -197,6 +197,8 @@ def update_labelme_annotation(
     raw_shape["group_id"] = annotation.group_id
     raw_shape["flags"] = dict(annotation.flags)
     raw_shape["shape_type"] = _labelme_shape_type_for_annotation(annotation)
+    if annotation.is_text_label and annotation.description is not None:
+        raw_shape["description"] = annotation.description
     _write_labelme_root(json_path, raw_data)
     return json_path
 
@@ -409,7 +411,7 @@ def annotation_to_labelme_shape(annotation: Annotation) -> dict[str, Any]:
         "label": annotation.label,
         "points": [[x, y] for x, y in annotation.points],
         "group_id": annotation.group_id,
-        "description": "",
+        "description": annotation.description or "",
         "shape_type": shape_type,
         "flags": dict(annotation.flags),
     }
@@ -550,6 +552,7 @@ def _annotation_from_shape(
     annotation_id: str | None = (
         str(raw_annotation_id) if raw_annotation_id is not None else None
     )
+    raw_description: Any = raw_shape.get("description")
 
     return Annotation(
         label=str(raw_shape.get("label", "")),
@@ -560,6 +563,7 @@ def _annotation_from_shape(
         source_shape_type=source_shape_type,
         annotation_id=annotation_id,
         source_shape_index=source_shape_index,
+        description=raw_description if isinstance(raw_description, str) else None,
     )
 
 

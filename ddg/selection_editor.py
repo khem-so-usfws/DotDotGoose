@@ -212,7 +212,7 @@ class SelectionEditor(QtCore.QObject):
         for index in sorted(self.canvas.selected_annotation_indices):
             annotation: Annotation = self.canvas.external_annotations[index]
             lines.append(
-                f"{annotation.label} ({annotation.shape_type.value})"
+                f"{annotation.display_label} ({annotation.shape_type.value})"
                 + (" · locked" if annotation.locked else "")
             )
         return "\n".join(lines)
@@ -334,6 +334,15 @@ class SelectionEditor(QtCore.QObject):
         """
         cursor: QtCore.QPointF = QtCore.QPointF(position)
         result: list[Target] = []
+        # Use viewport bounds so a label can be selected between its letters.
+        annotation_items: set[int] = {
+            int(item.data(1))
+            for item in self.view.items(
+                QtCore.QRect(position, QtCore.QSize(1, 1)),
+                QtCore.Qt.ItemSelectionMode.IntersectsItemBoundingRect,
+            )
+            if item.data(0) == "ddg_external_annotation"
+        }
         if self.canvas.show_points:
             for name, points in self.canvas.points.get(
                 self.canvas.current_image_name, {}
@@ -347,7 +356,7 @@ class SelectionEditor(QtCore.QObject):
                             Target("dot", distance, class_name=name, point=point)
                         )
         for index, annotation in enumerate(self.canvas.external_annotations):
-            if not self.canvas.annotation_type_visible(annotation.shape_type):
+            if not self.canvas.annotation_type_visible(annotation.visibility_type):
                 continue
             points: list[QtCore.QPointF] = [
                 QtCore.QPointF(self.view.mapFromScene(QtCore.QPointF(x, y)))
@@ -356,6 +365,8 @@ class SelectionEditor(QtCore.QObject):
             inside: bool = False
             if len(points) == 1:
                 distance = QtCore.QLineF(cursor, points[0]).length()
+                if annotation.is_text_label and index in annotation_items:
+                    distance = min(distance, 4.0)
             else:
                 pairs: list[tuple[QtCore.QPointF, QtCore.QPointF]] = list(
                     zip(points, points[1:])
@@ -416,7 +427,7 @@ class SelectionEditor(QtCore.QObject):
             text: str = (
                 f"Dot · {hit.class_name}"
                 if hit.kind == "dot"
-                else f"{self.canvas.external_annotations[hit.annotation].label} · annotation {hit.annotation + 1}"
+                else f"{self.canvas.external_annotations[hit.annotation].display_label} · annotation {hit.annotation + 1}"
             )
             actions[menu.addAction(f"{number}. {text}")] = hit
         action: QtGui.QAction | None = menu.exec(
@@ -566,7 +577,7 @@ class SelectionEditor(QtCore.QObject):
                     ):
                         self.canvas.selection.append((name, point))
         for index, annotation in enumerate(self.canvas.external_annotations):
-            if self.canvas.annotation_type_visible(annotation.shape_type) and all(
+            if self.canvas.annotation_type_visible(annotation.visibility_type) and all(
                 rect.contains(self.view.mapFromScene(QtCore.QPointF(x, y)))
                 for x, y in annotation.points
             ):

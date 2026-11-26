@@ -65,6 +65,11 @@ counting class and counts. The main toolbar controls the selected tool and the
 visibility of dots, grid, navigator, and annotations across panes. The toolbar
 and pane headers move secondary actions into menus when space is limited.
 
+Use **Text Label** to place an outlined caption in any docked or floating pane.
+Click the photo and enter the caption. If the same photo is open in two panes,
+both show the updated label. **Annotations > Show Text Labels** controls their
+visibility across the workspace.
+
 Choose **Select** to move or delete whole dots and annotations in any open pane.
 Use the main toolbar’s **Edit Shape** tools to reshape or edit vertices on one
 line or polygon in the active pane, including a floating pane.
@@ -110,7 +115,7 @@ folder. View adjustments preserve the source pixels and annotation coordinates.
 ## Saving and recovery
 
 Count dots, image fields, and project metadata save in the shared `.pnt` file.
-Landmarks, cutlines, and count regions save immediately to the image's
+Landmarks, text labels, cutlines, and count regions save immediately to the image's
 LabelMe-compatible JSON sidecar. Keep the images and their sidecars together when
 moving a project.
 

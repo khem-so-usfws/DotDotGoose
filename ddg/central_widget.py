@@ -35,6 +35,7 @@ from ddg.fields import BoxText, LineText
 from ddg.annotation_properties_dialog import AnnotationPropertiesDialog
 from ddg.count_region_qa_dialog import CountRegionQADialog
 from ddg.annotations import Annotation, AnnotationShape
+from ddg.annotations.model import AnnotationVisibilityType
 from ddg.central_graphics_view import CentralGraphicsView, InteractionMode
 from ddg.compare_pane import ComparePane
 from ddg.image_workspace import ImageWorkspace
@@ -129,6 +130,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         self.graphicsView.add_point.connect(self.canvas.add_point)
         self.graphicsView.annotation_point_completed.connect(
             self.canvas.add_landmark_annotation
+        )
+        self.graphicsView.text_label_requested.connect(
+            lambda point: self.add_text_label(self.graphicsView, self.canvas, point)
         )
         self.graphicsView.line_completed.connect(self.canvas.add_line_annotation)
         self.graphicsView.polygon_completed.connect(self.canvas.add_polygon_annotation)
@@ -574,6 +578,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             canvas: Image scene receiving edits.
         """
         view.annotation_point_completed.connect(canvas.add_landmark_annotation)
+        view.text_label_requested.connect(
+            lambda point: self.add_text_label(view, canvas, point)
+        )
         view.line_completed.connect(canvas.add_line_annotation)
         view.polygon_completed.connect(canvas.add_polygon_annotation)
         view.external_annotation_selected.connect(canvas.select_external_annotation)
@@ -1069,12 +1076,48 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
             self.canvas.load_image(image_path)
 
     def set_annotation_type_visible(
-        self, shape_type: AnnotationShape, visible: bool
+        self, shape_type: AnnotationVisibilityType, visible: bool
     ) -> None:
-        """Apply native-annotation visibility to both displayed images."""
+        """Apply the annotation category's visibility across the workspace.
+
+        Args:
+            shape_type: Display category to show or hide.
+            visible: Whether the category should be displayed.
+        """
         self.canvas.set_annotation_type_visible(shape_type, visible)
         for _pane, canvas in self._secondary_panes():
             canvas.set_annotation_type_visible(shape_type, visible)
+        self.workspace_feedback.refresh()
+
+    def add_text_label(
+        self, view: CentralGraphicsView, canvas: Canvas, point: QtCore.QPointF
+    ) -> None:
+        """Prompt for a label and save it on the clicked photo.
+
+        Args:
+            view: Pane that received the click.
+            canvas: Scene for that pane.
+            point: Click in original image pixel coordinates.
+        """
+        image_name: str | None = canvas.current_image_name
+        image_size: tuple[int, ...] = getattr(
+            canvas.image_cache.get("data"), "shape", ()
+        )
+        if not image_name or len(image_size) < 2:
+            return
+        height: int
+        width: int
+        height, width = image_size[:2]
+        if not (0 <= point.x() < width and 0 <= point.y() < height):
+            return
+
+        text: str
+        accepted: bool
+        text, accepted = QtWidgets.QInputDialog.getText(
+            view.window(), self.tr("Add Text Label"), self.tr("Text:")
+        )
+        if accepted and canvas.current_image_name == image_name:
+            canvas.add_text_label_annotation(point, text)
 
     def set_dim_outside_count_region(self, enabled: bool) -> None:
         """Apply count-region dimming preference to both displayed images."""
@@ -1165,7 +1208,9 @@ class CentralWidget(QtWidgets.QDialog, CLASS_DIALOG):
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         canvas.update_selected_external_annotation_properties(
-            dialog.annotation_label(), dialog.annotation_locked()
+            dialog.annotation_label(),
+            dialog.annotation_locked(),
+            dialog.annotation_description(),
         )
 
     def set_selected_annotation_locked(self, locked: bool) -> None:

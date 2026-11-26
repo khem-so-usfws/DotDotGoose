@@ -4,7 +4,7 @@ DotDotGoose is a free, open source tool for manually counting objects in images.
 This fork extends upstream DotDotGoose 1.7.1 with native annotations, up to four dockable
 image panes, and shared counting and editing tools.
 
-Current fork version **1.9.2**.
+Current fork version **1.9.3**.
 
 Count points and annotations retain original-image pixel coordinates, making
 them suitable for review, analysis, and future computer-assisted counting.
@@ -16,7 +16,7 @@ Download the Windows x64 ZIP from this fork's
 Extract the entire archive, then run `DotDotGoose.exe` inside the extracted
 folder. Keep the bundled runtime files alongside the executable.
 
-The 1.9.2 package is named `DotDotGoose-1.9.2-windows-x64.zip`. Python and Conda
+The 1.9.3 package is named `DotDotGoose-1.9.3-windows-x64.zip`. Python and Conda
 are required only when running from source or building a release.
 
 ## Counting and image panes
@@ -99,6 +99,12 @@ starts the shape. Drawing tools stay selected after a shape is completed.
 Finish an unfinished shape with Enter, or cancel it with Esc, before changing
 tools or images or starting a shape in the other pane.
 
+Choose **Text Label** beside **Landmark**, click a photo, and enter a short
+caption such as “Start count here.” The outlined text stays upright and readable
+when you zoom or rotate the photo. To edit the text, select the label and open
+**Annotation properties…** from its right-click menu. Text labels are saved with
+the photo's annotations and leave the dot counts unchanged.
+
 Choose **Select** to work with count dots and annotations together.
 
 | Input | Action |
@@ -117,7 +123,9 @@ containing a locked annotation must be unlocked or adjusted before moving or
 deleting it. An overlap menu helps choose between nearby items.
 
 The pane's selection menu offers **Move by pixel offset**, Delete, and Clear
-selection. Annotation properties include labels, symbology, and locking.
+selection. **Annotation properties…** controls labels, captions, and locking.
+Use **Annotations > Symbology…** to change the appearance of landmarks, cutlines,
+and count regions.
 
 In any pane, **Change class…** works in Count dots and Select. Choose an
 existing class and click **Apply**. Counts and dot colors update together, and
@@ -165,15 +173,16 @@ The main toolbar has three groups separated by pipe dividers.
 | --- | --- |
 | Panels | Left sidebar, Right sidebar, Panes |
 | Display | Dots, Grid, Navigator, Annotations |
-| Tools | Landmark, Line, Polygon, Select, Edit Shape, Snap, Trace, Count dots, Class |
+| Tools | Landmark, Text Label, Line, Polygon, Select, Edit Shape, Snap, Trace, Count dots, Class |
 
 Tools share one active mode across all panes. The selected class appears beside
 Count dots, or beside the active-tool selector when the toolbar is compact.
 Toolbar groups collapse into menus as the window narrows.
 
-The sidebar buttons stay pressed while their areas are visible.
+The sidebar and Panes buttons stay pressed while their areas are visible.
 Use **Annotations** to hide or show annotations and their count-region overlays
-in all panes. Per-type visibility settings in the Annotations menu are retained.
+in all panes. **Annotations > Show Text Labels** controls text labels separately
+from landmarks, cutlines, and count regions. Per-type settings are retained.
 
 Both sidebars start open and can be toggled or resized. The left sidebar starts
 at 425 pixels when space permits. The right sidebar initially receives one quarter
@@ -258,8 +267,8 @@ The script runs the tests, builds the application using `DotDotGoose.spec`, adds
 the license and documentation, and creates the versioned folder and ZIP.
 
 ```text
-dist\DotDotGoose-1.9.2-windows-x64\DotDotGoose.exe
-dist\DotDotGoose-1.9.2-windows-x64.zip
+dist\DotDotGoose-1.9.3-windows-x64\DotDotGoose.exe
+dist\DotDotGoose-1.9.3-windows-x64.zip
 ```
 
 The package version comes from `ddg.__version__`. Generated `build/` and `dist/`
@@ -277,8 +286,8 @@ folder, add the documentation, and create the ZIP.
 Run these commands from the repository root in Anaconda Prompt.
 
 ```bat
-set "DDG_STAGE=%TEMP%\ddg-1.9.2-release-%RANDOM%"
-set "DDG_PACKAGE=DotDotGoose-1.9.2-windows-x64"
+set "DDG_STAGE=%TEMP%\ddg-1.9.3-release-%RANDOM%"
+set "DDG_PACKAGE=DotDotGoose-1.9.3-windows-x64"
 
 powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $package=Join-Path $env:DDG_STAGE $env:DDG_PACKAGE; New-Item -ItemType Directory -Path $package -Force | Out-Null; Get-ChildItem -LiteralPath 'dist\DotDotGoose' -Force | Copy-Item -Destination $package -Recurse -Force; Copy-Item -LiteralPath 'LICENSE','README.md','changelog.md','docs' -Destination $package -Recurse; $zip=$package+'.zip'; Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal; Get-Item -LiteralPath $zip | Select-Object FullName,Length"
 
@@ -295,18 +304,18 @@ annotations, rotation, enhancement, recovery, undo/redo, and export. Include a
 Windows machine without Python or Conda when testing the packaged application.
 
 For each new release, commit the final source, push the release branch, and
-create an annotated version tag. The example below uses `main` and `v1.9.2`.
+create an annotated version tag. The example below uses `main` and `v1.9.3`.
 Use a new version for a release following an already published tag.
 
 ```bat
 git push origin main
-git tag -a v1.9.2 -m "DotDotGoose 1.9.2"
-git push origin refs/tags/v1.9.2
+git tag -a v1.9.3 -m "DotDotGoose 1.9.3"
+git push origin refs/tags/v1.9.3
 ```
 
 Create a release from that tag on the
 [GitHub Releases page](https://github.com/khem-so-usfws/DotDotGoose/releases),
-add release notes, and attach `DotDotGoose-1.9.2-windows-x64.zip`. The attached
+add release notes, and attach `DotDotGoose-1.9.3-windows-x64.zip`. The attached
 Windows ZIP contains the executable and runtime files. GitHub's automatic
 source archives contain the source code.
 
@@ -329,11 +338,10 @@ Use this fork's releases for the features described here.
 During October and November 2026, OpenAI ChatGPT helped generate and revise
 Python code, automated tests, and documentation for this fork, including work
 on native annotations, dockable image panes, and workspace controls.
-Development of versions 1.9.1 and 1.9.2 used OpenAI Codex with the GPT-6 model
+Development of versions 1.9.1 through 1.9.3 used OpenAI Codex with the GPT-6 model
 family.
-The fork maintainer reviewed changes and tested application behavior on Windows.
-Automated tests checked the affected workflows. The maintainer is responsible
-for the released software.
+Automated tests check the affected workflows. The fork maintainer reviews
+changes, tests the Windows releases, and is responsible for the released software.
 
 Any use of trade, firm, or product names is for descriptive purposes only and
 does not imply endorsement by the U.S. Government.

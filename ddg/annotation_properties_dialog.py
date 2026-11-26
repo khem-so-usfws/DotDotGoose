@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from PyQt6 import QtWidgets
 
-from .annotations import Annotation
+from .annotations import Annotation, AnnotationShape
+from .annotations.model import TEXT_LABEL
 
 
 class AnnotationPropertiesDialog(QtWidgets.QDialog):
-    """Edit the label and lock state for one native annotation."""
+    """Edit the semantic label or visible text and the annotation lock state."""
 
     def __init__(
         self,
@@ -24,6 +25,7 @@ class AnnotationPropertiesDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Annotation Properties"))
 
+        self.annotation: Annotation = annotation
         form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
         shape_value: QtWidgets.QLabel = QtWidgets.QLabel(annotation.shape_type.value)
         self.label_edit: QtWidgets.QLineEdit = QtWidgets.QLineEdit(annotation.label)
@@ -33,7 +35,12 @@ class AnnotationPropertiesDialog(QtWidgets.QDialog):
         self.locked_checkbox.setChecked(annotation.locked)
 
         form.addRow(self.tr("Geometry:"), shape_value)
-        form.addRow(self.tr("Label:"), self.label_edit)
+        if annotation.is_text_label:
+            self.label_edit.setText(annotation.description or "")
+            self.label_edit.setReadOnly(annotation.locked)
+            form.addRow(self.tr("Text:"), self.label_edit)
+        else:
+            form.addRow(self.tr("Label:"), self.label_edit)
         form.addRow("", self.locked_checkbox)
 
         buttons: QtWidgets.QDialogButtonBox = QtWidgets.QDialogButtonBox(
@@ -53,7 +60,15 @@ class AnnotationPropertiesDialog(QtWidgets.QDialog):
         Returns:
             Trimmed annotation label.
         """
+        if self.annotation.is_text_label:
+            return TEXT_LABEL
         return self.label_edit.text().strip()
+
+    def annotation_description(self) -> str | None:
+        """Return the new caption when text label content was changed."""
+        if self.annotation.is_text_label and self.label_edit.isModified():
+            return self.label_edit.text().strip()
+        return None
 
     def annotation_locked(self) -> bool:
         """Return the requested lock state.
@@ -64,12 +79,30 @@ class AnnotationPropertiesDialog(QtWidgets.QDialog):
         return self.locked_checkbox.isChecked()
 
     def accept(self) -> None:
-        """Validate the semantic label before accepting changes."""
-        if not self.annotation_label():
+        """Validate the label or caption before accepting changes."""
+        label: str = self.annotation_label()
+        if self.annotation.is_text_label:
+            if self.annotation_description() == "":
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    self.tr("Text Required"),
+                    self.tr("Enter text for the label."),
+                )
+                return
+        elif not label:
             QtWidgets.QMessageBox.warning(
                 self,
                 self.tr("Annotation Label Required"),
                 self.tr("Enter a label before saving annotation properties."),
+            )
+            return
+        elif (
+            self.annotation.shape_type is AnnotationShape.POINT and label == TEXT_LABEL
+        ):
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("Reserved Label"),
+                self.tr("Use the Text Label tool to add text to an image."),
             )
             return
         super().accept()

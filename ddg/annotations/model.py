@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 Point: TypeAlias = tuple[float, float]
 LOCK_FLAG_KEY: str = "ddg_locked"
+TEXT_LABEL: Literal["text_label"] = "text_label"
 
 
 class AnnotationShape(str, Enum):
@@ -17,6 +18,9 @@ class AnnotationShape(str, Enum):
     POINT = "point"
     LINE = "line"
     POLYGON = "polygon"
+
+
+AnnotationVisibilityType: TypeAlias = AnnotationShape | Literal["text_label"]
 
 
 @dataclass(slots=True)
@@ -35,6 +39,7 @@ class Annotation:
             relationships such as linked landmarks.
         source_shape_index: Zero-based index of the corresponding shape in the
             LabelMe ``shapes`` list, when loaded or saved from a sidecar.
+        description: Optional LabelMe description, displayed for text labels.
     """
 
     label: str
@@ -45,6 +50,7 @@ class Annotation:
     source_shape_type: str | None = None
     annotation_id: str | None = None
     source_shape_index: int | None = None
+    description: str | None = None
 
     def __post_init__(self) -> None:
         """Validate geometry immediately after construction."""
@@ -66,6 +72,23 @@ class Annotation:
             raise ValueError("Line annotations require at least two vertices.")
         if self.shape_type is AnnotationShape.POLYGON and point_count < 3:
             raise ValueError("Polygon annotations require at least three vertices.")
+
+    @property
+    def is_text_label(self) -> bool:
+        """Return whether this is a point with the reserved text label class."""
+        return self.shape_type is AnnotationShape.POINT and self.label == TEXT_LABEL
+
+    @property
+    def display_label(self) -> str:
+        """Return the visible caption or the ordinary annotation class."""
+        if self.is_text_label and self.description:
+            return self.description.strip() or self.label
+        return self.label
+
+    @property
+    def visibility_type(self) -> AnnotationVisibilityType:
+        """Return the display category, independent of stored point geometry."""
+        return TEXT_LABEL if self.is_text_label else self.shape_type
 
     @property
     def locked(self) -> bool:

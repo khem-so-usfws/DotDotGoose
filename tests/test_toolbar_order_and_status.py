@@ -1,12 +1,14 @@
 """Toolbar grouping, path visibility, legacy sidebar allocation, and quiet status."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
+from pytestqt.qtbot import QtBot
 
 from ddg.central_graphics_view import InteractionMode
+from ddg.central_widget import CentralWidget
 from ddg.main_window import MainWindow
 from test_workspace_controls import window  # noqa: F401
 
@@ -31,6 +33,7 @@ def test_toolbar_order_pipes_and_one_active_tool(
     tools: Any = layout.groups[1]
     order: list[InteractionMode] = [
         InteractionMode.POINT,
+        InteractionMode.TEXT_LABEL,
         InteractionMode.LINE,
         InteractionMode.POLYGON,
         InteractionMode.SELECT,
@@ -68,6 +71,52 @@ def test_toolbar_order_pipes_and_one_active_tool(
     assert all(not action.text() == "|" for action in tools.selector.menu().actions())
     assert tools.selector.text() == "Count dots"
     assert layout.class_indicator.isVisible()
+
+
+def test_panel_buttons_keep_their_geometry(window: MainWindow, qtbot: QtBot) -> None:
+    """Toggling a panel keeps the toolbar steady and leaves room for Panes.
+
+    Args:
+        window: Initialized application window.
+        qtbot: Qt interaction fixture.
+    """
+    widget: CentralWidget = cast(CentralWidget, window.centralWidget())
+    buttons: list[QtWidgets.QToolButton] = widget.workspace_layout.groups[0].buttons
+    panes: QtWidgets.QToolButton = window.workspace_controls.compare_button
+    text_width: int = panes.fontMetrics().horizontalAdvance(panes.text())
+    before: list[QtCore.QRect] = [
+        QtCore.QRect(button.mapTo(window, QtCore.QPoint()), button.size())
+        for button in buttons
+    ]
+    size_hints: list[QtCore.QSize] = [button.sizeHint() for button in buttons]
+    for button in buttons:
+        assert button.isVisible() and button.isChecked()
+        for checked in (False, True):
+            # Click the action side even when the button also opens a menu.
+            qtbot.mouseClick(
+                button,
+                QtCore.Qt.MouseButton.LeftButton,
+                pos=QtCore.QPoint(button.width() // 3, button.height() // 2),
+            )
+            assert button.isChecked() == checked
+            assert [item.sizeHint() for item in buttons] == size_hints
+            qtbot.wait(30)
+            assert [
+                QtCore.QRect(item.mapTo(window, QtCore.QPoint()), item.size())
+                for item in buttons
+            ] == before
+            option: QtWidgets.QStyleOptionToolButton = (
+                QtWidgets.QStyleOptionToolButton()
+            )
+            panes.initStyleOption(option)
+            arrow: QtCore.QRect = panes.style().subControlRect(
+                QtWidgets.QStyle.ComplexControl.CC_ToolButton,
+                option,
+                QtWidgets.QStyle.SubControl.SC_ToolButtonMenu,
+                panes,
+            )
+            assert arrow.isValid()
+            assert panes.width() - arrow.width() > text_width
 
 
 def test_working_directory_has_visible_space(window: MainWindow, qtbot: Any) -> None:

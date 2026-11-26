@@ -7,7 +7,7 @@ import math
 
 from PyQt6 import QtCore, QtGui
 
-from .model import AnnotationShape
+from .model import AnnotationShape, AnnotationVisibilityType
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,13 +102,13 @@ def save_annotation_style(
 
 
 def annotation_visibility_enabled(
-    shape_type: AnnotationShape,
+    shape_type: AnnotationVisibilityType,
     settings: QtCore.QSettings | None = None,
 ) -> bool:
-    """Return whether one annotation geometry type should be displayed.
+    """Return whether one annotation category should be displayed.
 
     Args:
-        shape_type: Annotation geometry whose visibility should be checked.
+        shape_type: Annotation category whose visibility should be checked.
         settings: Optional settings object, primarily for tests.
 
     Returns:
@@ -117,29 +117,31 @@ def annotation_visibility_enabled(
     active_settings: QtCore.QSettings = settings or QtCore.QSettings(
         "AMNH", "DotDotGoose"
     )
-    value: object = active_settings.value(
-        f"annotations/visibility/{shape_type.value}", True
+    key: str = (
+        shape_type.value if isinstance(shape_type, AnnotationShape) else shape_type
     )
+    value: object = active_settings.value(f"annotations/visibility/{key}", True)
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def save_annotation_visibility(
-    shape_type: AnnotationShape,
+    shape_type: AnnotationVisibilityType,
     visible: bool,
     settings: QtCore.QSettings | None = None,
 ) -> None:
-    """Persist display visibility for one annotation geometry type.
+    """Persist display visibility for one annotation category.
 
     Args:
-        shape_type: Annotation geometry whose visibility should be saved.
+        shape_type: Annotation category whose visibility should be saved.
         visible: Whether annotations of this type should be rendered.
         settings: Optional settings object, primarily for tests.
     """
     active_settings: QtCore.QSettings = settings or QtCore.QSettings(
         "AMNH", "DotDotGoose"
     )
-    active_settings.setValue(
-        f"annotations/visibility/{shape_type.value}", visible
+    key: str = (
+        shape_type.value if isinstance(shape_type, AnnotationShape) else shape_type
     )
+    active_settings.setValue(f"annotations/visibility/{key}", visible)

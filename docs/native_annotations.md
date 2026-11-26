@@ -18,9 +18,10 @@ C, Z, and X are temporary overrides: release the key and the current count or an
 
 ## Annotation types
 
-The `Annotations` menu provides three drawing tools:
+The Tools toolbar and **Annotations** menu provide four drawing tools.
 
 - **Landmark point** (`landmark`) — a non-count point for visual reference.
+- **Text Label** (`text_label`) — an outlined caption anchored to a point on a photo.
 - **Cutline** (`cutline`) — a line/polyline used to mark a visual division.
 - **Count region** (`count_region`) — a polygon defining the valid counting area for an image.
 
@@ -31,6 +32,17 @@ All annotation coordinates are stored in original source-image pixel coordinates
 ### Landmark
 
 Choose **Annotations > Draw Landmark Point** and click once. Press **Esc** to cancel before placement.
+
+### Text label
+
+Choose **Text Label** beside **Landmark** in the main toolbar, or choose
+**Annotations > Add Text Label**. Click any open photo, type a short caption,
+and press **Enter**. Use **Esc** or **Cancel** in the prompt to skip placement.
+The tool stays active for the next label. Choose **Count dots** to resume counting.
+
+The anchor follows the photo. The text stays upright at a fixed display size
+while you pan, zoom, or rotate. Hover over a shortened caption to read the full
+text. Text labels leave counts and count regions unchanged.
 
 ### Cutline
 
@@ -47,6 +59,12 @@ For images where the complete image is valid for counting, use **Annotations > U
 Use **Select** to click, move, or delete whole annotations and count dots.
 Shift+click adds or removes an item, and Shift+drag selects fully enclosed
 items. An overlap menu helps choose among nearby items.
+
+Click a text label's caption or anchor to select it. Drag a selected label to
+move its anchor, or press **Delete** to remove it. Choose **Annotation properties…**
+from its right-click or selection menu to edit the caption. Unlock a locked
+label before changing its text or location. Creation, text changes, moves, and
+deletions use the same cross-pane undo/redo as other annotations.
 
 Select one unlocked line or polygon and open **Edit Shape** in the main toolbar.
 
@@ -77,12 +95,14 @@ properties, and invalid polygon geometry is blocked. **Ctrl+Z** and
 
 The `Annotations` menu provides:
 
-- **Annotation Properties...** to change the semantic label and lock state.
+- **Annotation Properties...** to change the semantic label or caption and lock state.
 - **Lock Selected Annotation** / **Unlock Selected Annotation**.
-- independent show/hide toggles for point, line, and polygon annotations.
+- independent show/hide toggles for text labels, landmarks, lines, and polygons.
 - **Symbology...** to set color and stroke weight independently for landmarks, cutlines, and count regions.
 
 Symbology and visibility are DDG display preferences. They do not modify annotation geometry or semantic labels.
+**Annotations > Show Text Labels** controls captions separately from landmark
+points. The toolbar's **Annotations** button controls all annotation categories.
 
 ## Count-region behavior
 
@@ -125,18 +145,40 @@ The standard counting workflow uses:
 | Geometry | Label | Meaning |
 |---|---|---|
 | Point | `landmark` | Visual reference location; never a count point |
+| Point | `text_label` | The caption is stored in the shape's `description` field |
 | Line | `cutline` | Visual division between portions of a colony |
 | Polygon | `count_region` | Valid point-counting area for that source image |
 
-The shape type and label are separate. Labels can be changed through Annotation Properties when another semantic use is needed.
+The shape type and label are separate. The `text_label` point class is reserved
+for captions. Use Annotation Properties to change the caption or an ordinary
+annotation's semantic label.
 
 ## Compatibility
 
 The source image is never resampled or modified by native annotations. Coordinates remain in original-image pixel space, preserving compatibility with future training-data and multi-image colony workflows.
 
+Each text label uses a standard LabelMe point shape. For example, a shape in the
+sidecar's `shapes` array can contain the following fields.
+
+```json
+{
+  "label": "text_label",
+  "points": [[640.0, 420.0]],
+  "group_id": null,
+  "description": "Start count here",
+  "shape_type": "point",
+  "flags": {}
+}
+```
+
+LabelMe reads this as a point and retains the caption in the description field
+in versions that support shape descriptions. DotDotGoose draws that description
+on the image. Other point classes keep their usual appearance even when they
+have a description. See the [LabelMe shape parser](https://github.com/wkentaro/labelme/blob/v5.7.0/labelme/label_file.py#L95-L107).
+
 ## Shared toolbar tools
 
-The Tools toolbar exposes Count dots, Landmark, Line, Polygon, Select, and Edit Shape.
+The Tools toolbar exposes Count dots, Landmark, Text Label, Line, Polygon, Select, and Edit Shape.
 Choose one tool and use any open pane directly. Drawing tools stay active after
 completion. Select handles dots and every annotation type without choosing
 a geometry type first. Shift+click toggles items, Shift+drag from empty space adds

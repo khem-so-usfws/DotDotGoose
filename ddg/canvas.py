@@ -28,6 +28,7 @@ import json
 import glob
 from copy import deepcopy
 from dataclasses import replace
+from html import escape
 from typing import Any, Callable, Iterable, TypeAlias, cast
 
 import numpy as np
@@ -36,7 +37,7 @@ from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from .photo_selection import PhotoSelection
-from .annotations.model import Point
+from .annotations.model import TEXT_LABEL, AnnotationVisibilityType, Point
 from .annotations import (
     Annotation,
     AnnotationShape,
@@ -60,6 +61,29 @@ from .annotations import (
 _ANNOTATION_HISTORY_IMAGE_DATA_KEY: str = "__ddg_history_preserve_image_data__"
 _ANNOTATION_HISTORY_UNAVAILABLE_KEY: str = "__ddg_history_snapshot_unavailable__"
 HistoryEvent: TypeAlias = tuple[object, ...]
+
+
+class _TextLabelItem(QtWidgets.QGraphicsPathItem):
+    """Paint an outlined caption without covering the thin strokes of its text."""
+
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionGraphicsItem,
+        widget: QtWidgets.QWidget | None = None,
+    ) -> None:
+        """Paint the black halo first, then fill the caption and anchor.
+
+        Args:
+            painter: Active scene painter.
+            option: Style options supplied by the scene.
+            widget: Optional viewport supplied by the scene.
+        """
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.strokePath(self.path(), self.pen())
+        painter.fillPath(self.path(), self.brush())
+        painter.restore()
 
 
 class Canvas(QtWidgets.QGraphicsScene):
@@ -299,6 +323,24 @@ class Canvas(QtWidgets.QGraphicsScene):
             label="landmark",
             shape_type=AnnotationShape.POINT,
             points=[(point.x(), point.y())],
+        )
+        self._save_native_annotation(annotation)
+
+    def add_text_label_annotation(self, point: QtCore.QPointF, text: str) -> None:
+        """Save a non-count text label anchored at a source-image pixel.
+
+        Args:
+            point: Anchor in source-image pixel coordinates.
+            text: Text to display beside the anchor.
+        """
+        description: str = text.strip()
+        if not description:
+            return
+        annotation: Annotation = Annotation(
+            label=TEXT_LABEL,
+            shape_type=AnnotationShape.POINT,
+            points=[(point.x(), point.y())],
+            description=description,
         )
         self._save_native_annotation(annotation)
 
@@ -618,11 +660,11 @@ class Canvas(QtWidgets.QGraphicsScene):
         settings.setValue("annotations/count_region/dim_outside", enabled)
         self.refresh_count_region_mask()
 
-    def annotation_type_visible(self, shape_type: AnnotationShape) -> bool:
-        """Return whether one native annotation geometry type is visible.
+    def annotation_type_visible(self, shape_type: AnnotationVisibilityType) -> bool:
+        """Return whether a native annotation category is visible.
 
         Args:
-            shape_type: Geometry type to query.
+            shape_type: Display category to query.
 
         Returns:
             Effective visibility after applying both display settings.
@@ -643,13 +685,13 @@ class Canvas(QtWidgets.QGraphicsScene):
 
     def set_annotation_type_visible(
         self,
-        shape_type: AnnotationShape,
+        shape_type: AnnotationVisibilityType,
         visible: bool,
     ) -> None:
-        """Persist and apply visibility for one annotation geometry type.
+        """Persist and apply visibility for one annotation category.
 
         Args:
-            shape_type: Geometry type to show or hide.
+            shape_type: Display category to show or hide.
             visible: Whether it should be rendered.
         """
         save_annotation_visibility(shape_type, visible)
@@ -658,7 +700,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             not visible
             and selected_index is not None
             and 0 <= selected_index < len(self.external_annotations)
-            and self.external_annotations[selected_index].shape_type is shape_type
+            and self.external_annotations[selected_index].visibility_type == shape_type
         ):
             self.selected_annotation_indices = set()
             self.selected_external_annotation_index = None
@@ -666,7 +708,7 @@ class Canvas(QtWidgets.QGraphicsScene):
             self.selected_annotation_indices = {
                 index
                 for index in self.selected_annotation_indices
-                if self.external_annotations[index].shape_type is not shape_type
+                if self.external_annotations[index].visibility_type != shape_type
             }
         if (
             self.selected_external_annotation_index is None
@@ -810,23 +852,27 @@ class Canvas(QtWidgets.QGraphicsScene):
             annotation: Annotation to render.
             annotation_index: Index in ``external_annotations``.
         """
-        if not self.annotation_type_visible(annotation.shape_type):
+        if not self.annotation_type_visible(annotation.visibility_type):
             return
 
         style: AnnotationStyle = load_annotation_style(annotation.shape_type)
         annotation_color: QtGui.QColor = QtGui.QColor(style.color)
         annotation_pen: QtGui.QPen = QtGui.QPen(annotation_color, style.width)
         annotation_pen.setCosmetic(True)
-        if (
+        selected: bool = (
             annotation_index == self.selected_external_annotation_index
             or annotation_index in self.selected_annotation_indices
-        ):
+        )
+        if selected:
             annotation_pen.setColor(QtGui.QColor("#ffcc00"))
             annotation_pen.setStyle(QtCore.Qt.PenStyle.DashLine)
             annotation_pen.setWidthF(max(style.width + 1.5, 2.0))
 
         item: QtWidgets.QGraphicsItem | None = None
-        if annotation.shape_type is AnnotationShape.POINT:
+        if annotation.is_text_label:
+            item = self._render_text_label(annotation, selected)
+
+        elif annotation.shape_type is AnnotationShape.POINT:
             x: float
             y: float
             x, y = annotation.points[0]
@@ -864,11 +910,52 @@ class Canvas(QtWidgets.QGraphicsScene):
             item.setData(3, annotation.shape_type.value)
             item.setData(4, annotation.locked)
             if annotation.label:
-                tooltip: str = annotation.label
+                tooltip: str = annotation.display_label
                 if annotation.locked:
                     tooltip += self.tr(" (locked)")
+                if annotation.is_text_label:
+                    tooltip = "<p>" + escape(tooltip).replace("\n", "<br>") + "</p>"
                 item.setToolTip(tooltip)
             self.external_annotation_items.append(item)
+
+    def _render_text_label(
+        self, annotation: Annotation, selected: bool
+    ) -> QtWidgets.QGraphicsPathItem:
+        """Render a small anchor and readable, outlined text in screen pixels.
+
+        Args:
+            annotation: Text label with one image-pixel anchor.
+            selected: Whether the label should use the selection color.
+
+        Returns:
+            Graphics item positioned at the label's image anchor.
+        """
+        font: QtGui.QFont = QtWidgets.QApplication.font()
+        font.setPixelSize(15)
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        caption: str = " ".join((annotation.description or "").split())
+        caption = QtGui.QFontMetrics(font).elidedText(
+            caption, QtCore.Qt.TextElideMode.ElideRight, 320
+        )
+        path: QtGui.QPainterPath = QtGui.QPainterPath()
+        path.setFillRule(QtCore.Qt.FillRule.WindingFill)
+        path.addEllipse(QtCore.QPointF(), 2.5, 2.5)
+        path.addText(8.0, -5.0, font, caption)
+        halo: QtGui.QPen = QtGui.QPen(QtGui.QColor("black"), 3.0)
+        halo.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        fill: QtGui.QBrush = QtGui.QBrush(
+            QtGui.QColor("#ffcc00" if selected else "white")
+        )
+        item: _TextLabelItem = _TextLabelItem(path)
+        item.setPen(halo)
+        item.setBrush(fill)
+        item.setPos(*annotation.points[0])
+        # The anchor follows the photo while the caption stays upright and legible.
+        item.setFlag(
+            QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        )
+        self.addItem(item)
+        return item
 
     def _render_external_annotation_handles(self) -> None:
         """Render fixed-screen-size vertex handles for the selected annotation."""
@@ -882,7 +969,9 @@ class Canvas(QtWidgets.QGraphicsScene):
             return
 
         annotation: Annotation = self.external_annotations[annotation_index]
-        if annotation.locked or not self.annotation_type_visible(annotation.shape_type):
+        if annotation.locked or not self.annotation_type_visible(
+            annotation.visibility_type
+        ):
             return
         style: AnnotationStyle = load_annotation_style(annotation.shape_type)
         color: QtGui.QColor = QtGui.QColor(style.color)
@@ -1289,12 +1378,14 @@ class Canvas(QtWidgets.QGraphicsScene):
         self,
         label: str,
         locked: bool,
+        description: str | None = None,
     ) -> bool:
-        """Persist label and lock-state changes for the selected annotation.
+        """Persist properties of the selected annotation.
 
         Args:
             label: New non-empty semantic label.
             locked: Whether editing should be locked.
+            description: New caption for a text label, if supplied.
 
         Returns:
             ``True`` when the properties were saved successfully.
@@ -1305,20 +1396,40 @@ class Canvas(QtWidgets.QGraphicsScene):
         normalized_label: str = label.strip()
         if not normalized_label:
             return False
+        if annotation.shape_type is AnnotationShape.POINT and (
+            (normalized_label == TEXT_LABEL) != annotation.is_text_label
+        ):
+            return False
+        new_description: str | None = annotation.description
+        if annotation.is_text_label and description is not None:
+            new_description = description.strip()
+            if not new_description or (
+                annotation.locked and new_description != annotation.description
+            ):
+                return False
         source_shape_index: int | None = annotation.source_shape_index
         if source_shape_index is None:
             return False
-        if annotation.label == normalized_label and annotation.locked == locked:
+        if (
+            annotation.label == normalized_label
+            and annotation.locked == locked
+            and annotation.description == new_description
+        ):
             return True
 
         image_path: str = os.path.join(self.directory, self.current_image_name)
         before_snapshot: dict[str, Any] | None = self._annotation_history_snapshot(
             image_path
         )
-        annotation.label = normalized_label
-        annotation.set_locked(locked)
+        replacement: Annotation = replace(
+            annotation,
+            label=normalized_label,
+            flags=dict(annotation.flags),
+            description=new_description,
+        )
+        replacement.set_locked(locked)
         try:
-            update_labelme_annotation(image_path, annotation)
+            update_labelme_annotation(image_path, replacement)
         except (
             OSError,
             json.JSONDecodeError,
@@ -1587,7 +1698,9 @@ class Canvas(QtWidgets.QGraphicsScene):
         annotation_index: int
         annotation: Annotation
         for annotation_index, annotation in enumerate(self.external_annotations):
-            if annotation.source_shape_index == source_shape_index:
+            if annotation.source_shape_index == source_shape_index and (
+                self.annotation_type_visible(annotation.visibility_type)
+            ):
                 self.selected_annotation_indices = {annotation_index}
                 self.selected_external_annotation_index = annotation_index
                 self._rerender_external_annotations(

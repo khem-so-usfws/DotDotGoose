@@ -226,10 +226,10 @@ def test_escape_cancels_pending_count_click(qtbot: Any) -> None:
         QtCore.Qt.MouseButton.LeftButton,
         pos=QtCore.QPoint(150, 150),
     )
-    assert view.count_click_press_position is not None
+    assert view.placement_click_press_position is not None
 
     qtbot.keyClick(view, QtCore.Qt.Key.Key_Escape)
-    assert view.count_click_press_position is None
+    assert view.placement_click_press_position is None
 
     qtbot.mouseRelease(
         view.viewport(),
@@ -286,10 +286,10 @@ def test_starting_annotation_mode_cancels_pending_count_click(qtbot: Any) -> Non
         QtCore.Qt.MouseButton.LeftButton,
         pos=QtCore.QPoint(150, 150),
     )
-    assert view.count_click_press_position is not None
+    assert view.placement_click_press_position is not None
 
     view.start_polygon_annotation()
-    assert view.count_click_press_position is None
+    assert view.placement_click_press_position is None
 
     qtbot.mouseRelease(
         view.viewport(),

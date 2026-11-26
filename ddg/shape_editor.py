@@ -220,7 +220,7 @@ class ShapeEditor(QtCore.QObject):
         vertex_distance: float = self.tolerance() / 2
         edge_distance: float = self.tolerance()
         for annotation in shapes:
-            if not self.canvas.annotation_type_visible(annotation.shape_type):
+            if not self.canvas.annotation_type_visible(annotation.visibility_type):
                 continue
             for index, candidate in enumerate(annotation.points):
                 gap: float = dist(xy, candidate)

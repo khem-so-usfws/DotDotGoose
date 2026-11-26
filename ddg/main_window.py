@@ -29,6 +29,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from ddg import AboutDialog, Canvas, CentralWidget, __version__
 from ddg.annotation_symbology_dialog import AnnotationSymbologyDialog
 from ddg.annotations import AnnotationShape
+from ddg.annotations.model import TEXT_LABEL
 from ddg.central_graphics_view import InteractionMode
 from ddg.photo_selection import PhotoSelection, read_photo_selection
 from ddg.workspace_controls import WorkspaceControls
@@ -184,6 +185,11 @@ class MainWindow(QtWidgets.QMainWindow):
         draw_landmark_action.setShortcut(QtGui.QKeySequence("Ctrl+Shift+M"))
         draw_landmark_action.triggered.connect(self.start_landmark_point)
 
+        draw_text_label_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Add Text Label")
+        )
+        draw_text_label_action.triggered.connect(self.start_text_label)
+
         draw_line_action: QtGui.QAction = annotation_menu.addAction(
             self.tr("Draw Cutline")
         )
@@ -257,6 +263,19 @@ class MainWindow(QtWidgets.QMainWindow):
         show_points_action.toggled.connect(
             lambda visible: self.centralWidget().set_annotation_type_visible(
                 AnnotationShape.POINT, visible
+            )
+        )
+
+        show_text_labels_action: QtGui.QAction = annotation_menu.addAction(
+            self.tr("Show Text Labels")
+        )
+        show_text_labels_action.setCheckable(True)
+        show_text_labels_action.setChecked(
+            self.centralWidget().canvas.annotation_type_visible(TEXT_LABEL)
+        )
+        show_text_labels_action.toggled.connect(
+            lambda visible: self.centralWidget().set_annotation_type_visible(
+                TEXT_LABEL, visible
             )
         )
 
@@ -340,6 +359,7 @@ class MainWindow(QtWidgets.QMainWindow):
             sidebar_toolbar,
             {
                 InteractionMode.POINT: draw_landmark_action,
+                InteractionMode.TEXT_LABEL: draw_text_label_action,
                 InteractionMode.LINE: draw_line_action,
                 InteractionMode.POLYGON: draw_polygon_action,
                 InteractionMode.SELECT: select_annotation_action,
@@ -371,6 +391,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tr(
                     "Landmark point: click once to place; C+drag pans; "
                     "Z/X+drag zoom; Esc to cancel."
+                )
+            )
+        elif mode == InteractionMode.TEXT_LABEL.value:
+            self.statusBar().showMessage(
+                self.tr(
+                    "Text Label: click an image to place a label and enter its text."
                 )
             )
         elif mode == "line":
@@ -447,6 +473,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "  Toolbar tools apply to all panes and stay selected.\n"
             "  Count dots returns to counting; Esc clears selection/cancels a draft.\n"
             "  Landmark: one point per click\n"
+            "  Text Label: click an image, type a caption, then press Enter\n"
             "  Cutline: click vertices, Enter/double-click to finish\n"
             "  Count region: click vertices, Enter/double-click to finish\n"
             "  Select: click dots or annotations; Shift+click toggles selection\n"
@@ -483,6 +510,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.centralWidget().workspace_feedback.controls.select_tool(
             InteractionMode.POINT
         )
+
+    def start_text_label(self) -> None:
+        """Start text label placement in all image panes."""
+        self.workspace_controls.select_tool(InteractionMode.TEXT_LABEL)
 
     def load_photo_selection(self) -> None:
         """Open a companion selection and apply it to the current project."""

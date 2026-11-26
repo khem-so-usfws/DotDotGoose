@@ -790,13 +790,10 @@ class ResponsiveWorkspace(QtCore.QObject):
             controls.compare_button,
             keep_special_visible=True,
         )
-        # Keep the visible state distinct even with a flat native toolbar style.
+        # Use the native checked appearance so Qt keeps the same button metrics
+        # in both states, including the space reserved for the Panes menu arrow.
         for button in panels_group.buttons:
             button.setAutoRaise(False)
-            button.setStyleSheet(
-                "QToolButton:checked { background-color: palette(midlight); "
-                "border: 1px inset palette(mid); }"
-            )
         controls.compare_button.menu().setTitle("Panes layout")
         shape_button: QtWidgets.QToolButton = controls.shape_button
         shape_button.setMinimumWidth(
@@ -814,6 +811,7 @@ class ResponsiveWorkspace(QtCore.QObject):
                 controls.actions[mode]
                 for mode in (
                     InteractionMode.POINT,
+                    InteractionMode.TEXT_LABEL,
                     InteractionMode.LINE,
                     InteractionMode.POLYGON,
                     InteractionMode.SELECT,

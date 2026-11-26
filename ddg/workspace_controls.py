@@ -99,6 +99,10 @@ class WorkspaceControls(QtCore.QObject):
                 "Landmark",
                 "Place landmark point annotations in any pane",
             ),
+            InteractionMode.TEXT_LABEL: (
+                "Text Label",
+                "Click an image to place a text label, then enter its caption",
+            ),
             InteractionMode.LINE: (
                 "Line",
                 "Draw cutlines in any pane; Enter finishes, Esc cancels the draft",
@@ -580,6 +584,7 @@ class WorkspaceControls(QtCore.QObject):
         instructions: dict[InteractionMode, str] = {
             InteractionMode.COUNT: "Count dots · click adds a point; Shift+drag selects points; Esc clears selection; C+drag pans; Z+drag zooms in; X+drag zooms out.",
             InteractionMode.POINT: "Landmark · click any pane to place a point. Tool stays selected; Count dots returns to counting.",
+            InteractionMode.TEXT_LABEL: "Text Label · click an image, enter the caption, and press Enter. Count dots returns to counting.",
             InteractionMode.LINE: "Line · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
             InteractionMode.POLYGON: "Polygon · click vertices in any pane; Enter/double-click finishes; Esc cancels the draft. Tool stays selected.",
             InteractionMode.SELECT: "Select · click dots or annotations; Shift+click toggles; Shift+drag selects; drag selected items to move; Delete removes; Esc clears.",

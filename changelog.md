@@ -3,6 +3,17 @@
 This changelog describes changes in this fork relative to upstream DotDotGoose
 1.7.1.
 
+## 1.9.3
+
+- Place outlined text labels on photos in any docked or floating pane using the
+  Text Label button. Labels stay upright and readable at different zoom levels.
+- Edit a label's text, move or delete it with Select, and undo or redo changes
+  across panes. Show or hide text labels independently of landmarks.
+- Save captions as descriptions on LabelMe-compatible point annotations.
+  Text labels leave count totals unchanged.
+- Keep the Left sidebar, Right sidebar, and Panes buttons steady when toggled
+  and keep the full Panes label visible beside its dropdown arrow.
+
 ## 1.9.2
 
 - Load Auto-DDG Cutline's recommended or analyst-checked photo selection into

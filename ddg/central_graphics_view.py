@@ -37,6 +37,7 @@ class InteractionMode(str, Enum):
     COUNT = "count"
     SELECT = "select"
     POINT = "point"
+    TEXT_LABEL = "text_label"
     LINE = "line"
     POLYGON = "polygon"
 
@@ -61,6 +62,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     annotation_point_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(
         QtCore.QPointF
     )
+    text_label_requested: QtCore.pyqtSignal = QtCore.pyqtSignal(QtCore.QPointF)
     line_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(list)
     polygon_completed: QtCore.pyqtSignal = QtCore.pyqtSignal(list)
     annotation_mode_changed: QtCore.pyqtSignal = QtCore.pyqtSignal(str)
@@ -140,10 +142,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.zoom_rubber_band: QtWidgets.QRubberBand = QtWidgets.QRubberBand(
             QtWidgets.QRubberBand.Shape.Rectangle, self.viewport()
         )
-        self.count_click_press_position: QtCore.QPoint | None = None
-        self.count_click_scene_point: QtCore.QPointF | None = None
-        self.count_click_moved: bool = False
-        self.count_click_threshold_px: int = 4
+        self.placement_click_press_position: QtCore.QPoint | None = None
+        self.placement_click_scene_point: QtCore.QPointF | None = None
+        self.placement_click_moved: bool = False
+        self.placement_click_threshold_px: int = 4
         self.count_point_placement_enabled: bool = True
         self.setViewportUpdateMode(
             QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate
@@ -177,7 +179,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.shift = False
         self.alt = False
         self._clear_navigation_state()
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         super().focusOutEvent(event)
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
@@ -367,7 +369,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
     def cancel_annotation(self) -> None:
         """Cancel any annotation interaction and return to count mode."""
         was_selection_mode: bool = self.interaction_mode is InteractionMode.SELECT
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         self._clear_line_preview()
         self._clear_polygon_preview()
         self.line_points = []
@@ -403,7 +405,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
         self._clear_navigation_state()
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
@@ -425,7 +427,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         self.dragging_annotation_changed = False
         self.dragging_annotation_last_point = None
         self._clear_navigation_state()
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         self.interaction_mode = InteractionMode.COUNT
         self.annotation_mode_changed.emit(self.interaction_mode.value)
 
@@ -522,7 +524,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             item for item in self.navigation_keys_down if item is not override
         ]
         self.navigation_keys_down.append(override)
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         self._update_navigation_cursor()
 
     def _release_navigation_override(self, override: NavigationOverride) -> None:
@@ -573,7 +575,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """
         self.navigation_gesture = override
         self.navigation_press_position = event.position().toPoint()
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         if override is NavigationOverride.PAN:
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
@@ -673,67 +675,70 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             self.centerOn(center)
         self.repaint()
 
-    def _cancel_pending_count_click(self) -> None:
-        """Clear an unfinished click-to-add count-point gesture."""
-        self.count_click_press_position = None
-        self.count_click_scene_point = None
-        self.count_click_moved = False
+    def _cancel_pending_placement_click(self) -> None:
+        """Clear an unfinished click-to-place gesture."""
+        self.placement_click_press_position = None
+        self.placement_click_scene_point = None
+        self.placement_click_moved = False
 
-    def _start_pending_count_click(self, event: QtGui.QMouseEvent) -> None:
-        """Record a possible click-to-add point gesture.
+    def _start_pending_placement_click(self, event: QtGui.QMouseEvent) -> None:
+        """Record a possible count dot or text label placement.
 
         Args:
-            event: Left-button press in normal count mode.
+            event: Left-button press in a placement mode.
         """
-        self.count_click_press_position = event.position().toPoint()
-        self.count_click_scene_point = self.mapToScene(event.position().toPoint())
-        self.count_click_moved = False
+        self.placement_click_press_position = event.position().toPoint()
+        self.placement_click_scene_point = self.mapToScene(event.position().toPoint())
+        self.placement_click_moved = False
         event.accept()
 
-    def _update_pending_count_click(self, event: QtGui.QMouseEvent) -> bool:
+    def _update_pending_placement_click(self, event: QtGui.QMouseEvent) -> bool:
         """Track mouse movement so a drag is never mistaken for a point click.
 
         Args:
             event: Mouse move event.
 
         Returns:
-            ``True`` when a pending count click consumed the event.
+            ``True`` when a pending placement consumed the event.
         """
-        origin: QtCore.QPoint | None = self.count_click_press_position
+        origin: QtCore.QPoint | None = self.placement_click_press_position
         if origin is None:
             return False
         if event.buttons() & QtCore.Qt.MouseButton.LeftButton:
             delta: QtCore.QPoint = event.position().toPoint() - origin
-            if delta.manhattanLength() > self.count_click_threshold_px:
-                self.count_click_moved = True
+            if delta.manhattanLength() > self.placement_click_threshold_px:
+                self.placement_click_moved = True
         event.accept()
         return True
 
-    def _finish_pending_count_click(self, event: QtGui.QMouseEvent) -> bool:
-        """Emit a count point only for a true click rather than a drag.
+    def _finish_pending_placement_click(self, event: QtGui.QMouseEvent) -> bool:
+        """Place the pending dot or text label only on a true click.
 
         Args:
             event: Mouse release event.
 
         Returns:
-            ``True`` when a pending count gesture consumed the event.
+            ``True`` when a pending placement consumed the event.
         """
         if (
-            self.count_click_press_position is None
+            self.placement_click_press_position is None
             or event.button() != QtCore.Qt.MouseButton.LeftButton
         ):
             return False
-        point: QtCore.QPointF | None = self.count_click_scene_point
-        origin: QtCore.QPoint = self.count_click_press_position
+        point: QtCore.QPointF | None = self.placement_click_scene_point
+        origin: QtCore.QPoint = self.placement_click_press_position
         release_delta: QtCore.QPoint = event.position().toPoint() - origin
         moved: bool = (
-            self.count_click_moved
-            or release_delta.manhattanLength() > self.count_click_threshold_px
+            self.placement_click_moved
+            or release_delta.manhattanLength() > self.placement_click_threshold_px
         )
-        self._cancel_pending_count_click()
+        self._cancel_pending_placement_click()
         event.accept()
         if not moved and point is not None:
-            self.add_point.emit(QtCore.QPointF(point))
+            if self.interaction_mode is InteractionMode.TEXT_LABEL:
+                self.text_label_requested.emit(point)
+            elif self.interaction_mode is InteractionMode.COUNT:
+                self.add_point.emit(point)
         return True
 
     def set_count_point_placement_enabled(self, enabled: bool) -> None:
@@ -744,7 +749,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """
         self.count_point_placement_enabled = bool(enabled)
         if not self.count_point_placement_enabled:
-            self._cancel_pending_count_click()
+            self._cancel_pending_placement_click()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """Handle annotation commands and temporary navigation key presses.
@@ -881,7 +886,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """
         if self._update_navigation_gesture(event):
             return
-        if self._update_pending_count_click(event):
+        if self._update_pending_placement_click(event):
             return
         if (
             self.interaction_mode is InteractionMode.SELECT
@@ -1000,6 +1005,10 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
                 self.external_annotation_selected.emit(-1)
                 event.accept()
             return
+        if self.interaction_mode is InteractionMode.TEXT_LABEL:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton and not shift_pressed:
+                self._start_pending_placement_click(event)
+            return
         if self.interaction_mode is InteractionMode.POINT:
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 point: QtCore.QPointF = self.mapToScene(event.position().toPoint())
@@ -1024,7 +1033,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             and shift_pressed
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
-            self._cancel_pending_count_click()
+            self._cancel_pending_placement_click()
             self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
             QtWidgets.QGraphicsView.mousePressEvent(self, event)
             return
@@ -1035,7 +1044,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
             # Plain click is the primary count action. Ctrl+click remains a
             # harmless compatibility alias because Ctrl does not change this
             # branch; C/Z/X are the explicit navigation overrides.
-            self._start_pending_count_click(event)
+            self._start_pending_placement_click(event)
             return
         QtWidgets.QGraphicsView.mousePressEvent(self, event)
 
@@ -1047,7 +1056,7 @@ class CentralGraphicsView(QtWidgets.QGraphicsView):
         """
         if self._finish_navigation_gesture(event):
             return
-        if self._finish_pending_count_click(event):
+        if self._finish_pending_placement_click(event):
             return
         if (
             self.interaction_mode is InteractionMode.SELECT
